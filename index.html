@@ -6794,13 +6794,21 @@ function CommuteCard({ commute, setCommute, onApplyToGas, userState }) {
     }
   };
 
+  const [open, setOpen] = useStateCommute(true);
   return (
-    <section className="card">
-      <header className="card-head">
-        <h2>Commute & vehicle</h2>
+    <section className={"card" + (open ? "" : " is-collapsed")}>
+      <header
+        className="card-head"
+        style={{ cursor: "pointer" }}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <h2 style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span className={"debt-card-chevron" + (open ? " is-open" : "")} style={{ pointerEvents: "none" }} aria-hidden="true">▾</span>
+          Commute & vehicle
+        </h2>
         {calc.cost > 0 && <span className="card-tag">{fmtUSD0(calc.cost)}/mo gas</span>}
       </header>
-      <div className="card-body stack">
+      {open && <div className="card-body stack">
         {!manualMode && (
           <>
             <Field label="Home address">
@@ -7074,7 +7082,7 @@ function CommuteCard({ commute, setCommute, onApplyToGas, userState }) {
             <span>Gas expense auto-synced to <strong>{fmtUSD0(calc.cost)}/mo</strong></span>
           </div>
         )}
-      </div>
+      </div>}
     </section>
   );
 }
@@ -7697,10 +7705,25 @@ window.sumExpenses = sumExpenses;
 function BudgetInputs({ inputs, setInputs }) {
   const upd = (k, v) => setInputs((s) => ({ ...s, [k]: v }));
   const updMulti = (patch) => setInputs((s) => ({ ...s, ...patch }));
+  const [open, setOpen] = useStateBudget(true);
   return (
-    <section className="card">
-      <header className="card-head"><h2>Income & location</h2></header>
-      <div className="card-body stack">
+    <section className={"card" + (open ? "" : " is-collapsed")}>
+      <header
+        className="card-head"
+        style={{ cursor: "pointer" }}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <h2 style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span className={"debt-card-chevron" + (open ? " is-open" : "")} style={{ pointerEvents: "none" }} aria-hidden="true">▾</span>
+          Income & location
+        </h2>
+        {!open && (
+          <span className="card-tag">
+            ${(inputs.salary || 0).toLocaleString()}/yr · {inputs.city || inputs.state}
+          </span>
+        )}
+      </header>
+      {open && <div className="card-body stack">
         <Field label="Annual salary" hint="gross, pre-tax">
           <Money value={inputs.salary} onChange={(v) => upd("salary", v)} placeholder="65,000" />
         </Field>
@@ -7780,7 +7803,7 @@ function BudgetInputs({ inputs, setInputs }) {
           label="FICA exempt"
           hint="F-1 / J-1 non-resident students & scholars"
         />
-      </div>
+      </div>}
     </section>
   );
 }
