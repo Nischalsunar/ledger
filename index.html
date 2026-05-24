@@ -12207,35 +12207,87 @@ function CompoundCalculator() {
   );
 }
 
-// Tiny stacked area chart for the compound calculator — contributions (gold)
-// vs. interest (green) over time.
+// Stacked bar chart for the compound calculator — contributions (gold) vs.
+// interest (green). Includes a Y-axis scale (max / mid / 0) so users
+// can read absolute values, plus value labels above the final bar.
 function CompoundChart({ rows }) {
   if (!rows || rows.length === 0) return null;
   const max = Math.max(...rows.map((r) => r.balance)) || 1;
+  // Friendly Y-axis number formatter so $1,000,000 doesn't crowd the gutter
+  const fmtAxis = (v) => {
+    if (v >= 1_000_000) return "$" + (v / 1_000_000).toFixed(v >= 10_000_000 ? 0 : 1) + "M";
+    if (v >= 1_000)     return "$" + Math.round(v / 1000) + "k";
+    return "$" + Math.round(v);
+  };
   return (
     <div style={{ marginTop: 16 }}>
-      <div style={{
-        height: 140,
-        display: "grid",
-        gridTemplateColumns: `repeat(${rows.length}, 1fr)`,
-        gap: rows.length > 20 ? 1 : 3,
-        alignItems: "end",
-        paddingBottom: 8,
-        borderBottom: "1px solid var(--border)",
-      }}>
-        {rows.map((r, i) => {
-          const contribH  = (r.contributed / max) * 100;
-          const interestH = (r.interest    / max) * 100;
-          return (
-            <div key={i} style={{ display: "flex", flexDirection: "column", justifyContent: "flex-end", height: "100%" }}
-                 title={`Year ${r.year}: ${fmtUSD0(r.balance)} (= ${fmtUSD0(r.contributed)} + ${fmtUSD0(r.interest)})`}>
-              <div style={{ height: `${interestH}%`, background: "var(--accent)", borderTopLeftRadius: 2, borderTopRightRadius: 2 }} />
-              <div style={{ height: `${contribH}%`,  background: "var(--gold)" }} />
-            </div>
-          );
-        })}
+      <div style={{ display: "flex", gap: 8 }}>
+        {/* Y-axis scale gutter — gives the user a reference for how big the bars are */}
+        <div style={{
+          display: "flex", flexDirection: "column", justifyContent: "space-between",
+          height: 180, paddingTop: 4, paddingBottom: 24,
+          fontSize: 10, color: "var(--ink-3)", fontFamily: "var(--mono)",
+          textAlign: "right", minWidth: 42,
+        }}>
+          <span>{fmtAxis(max)}</span>
+          <span>{fmtAxis(max * 0.5)}</span>
+          <span>$0</span>
+        </div>
+        {/* Bars */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{
+            height: 180,
+            display: "grid",
+            gridTemplateColumns: `repeat(${rows.length}, minmax(0, 1fr))`,
+            gap: rows.length > 20 ? 1 : 3,
+            alignItems: "end",
+            paddingBottom: 24, // room for x-axis labels
+            borderBottom: "1px solid var(--border)",
+            position: "relative",
+          }}>
+            {/* Horizontal gridlines at 50% */}
+            <div style={{ position: "absolute", left: 0, right: 0, top: "50%", borderTop: "1px dashed var(--border)", pointerEvents: "none" }} />
+            {rows.map((r, i) => {
+              const contribH  = (r.contributed / max) * 100;
+              const interestH = (r.interest    / max) * 100;
+              const isLast    = i === rows.length - 1;
+              return (
+                <div key={i} style={{ display: "flex", flexDirection: "column", justifyContent: "flex-end", height: "100%", position: "relative" }}
+                     title={`Year ${r.year}: ${fmtUSD0(r.balance)} (= ${fmtUSD0(r.contributed)} + ${fmtUSD0(r.interest)})`}>
+                  {/* Value label on the final bar */}
+                  {isLast && (
+                    <div style={{
+                      position: "absolute", bottom: `calc(${contribH + interestH}% + 4px)`,
+                      left: "50%", transform: "translateX(-50%)",
+                      fontSize: 10, fontFamily: "var(--display)",
+                      color: "var(--accent-2)", whiteSpace: "nowrap",
+                    }}>
+                      {fmtAxis(r.balance)}
+                    </div>
+                  )}
+                  <div style={{ height: `${interestH}%`, background: "var(--accent)", borderTopLeftRadius: 2, borderTopRightRadius: 2, minHeight: r.interest > 0 ? 1 : 0 }} />
+                  <div style={{ height: `${contribH}%`,  background: "var(--gold)",  minHeight: r.contributed > 0 ? 1 : 0 }} />
+                </div>
+              );
+            })}
+          </div>
+          {/* X-axis labels: show year for every bar if ≤10, otherwise every Nth */}
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: `repeat(${rows.length}, minmax(0, 1fr))`,
+            gap: rows.length > 20 ? 1 : 3,
+            fontSize: 10, color: "var(--ink-3)",
+            textAlign: "center", marginTop: 4,
+          }}>
+            {rows.map((r, i) => {
+              const stride = rows.length <= 10 ? 1 : Math.ceil(rows.length / 8);
+              const show = i % stride === 0 || i === rows.length - 1;
+              return <span key={i}>{show ? `Y${r.year}` : ""}</span>;
+            })}
+          </div>
+        </div>
       </div>
-      <div style={{ display: "flex", gap: 16, marginTop: 6, fontSize: 11, color: "var(--ink-3)" }}>
+      <div style={{ display: "flex", gap: 16, marginTop: 8, fontSize: 11, color: "var(--ink-3)" }}>
         <span><span style={{ display: "inline-block", width: 10, height: 10, background: "var(--gold)", marginRight: 4, verticalAlign: "middle" }} />Contributions</span>
         <span><span style={{ display: "inline-block", width: 10, height: 10, background: "var(--accent)", marginRight: 4, verticalAlign: "middle" }} />Interest (compounded)</span>
       </div>
@@ -15200,6 +15252,22 @@ function NetWorthCard({ data }) {
     return series;
   }, [accounts, horizon]);
 
+  // Today's anchor for absolute calendar labels. Recomputed once per mount
+  // (re-rendering doesn't shift the start date — only refreshing does).
+  const startDate = useMemoOv(() => new Date(), []);
+  const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  // Helper: month offset (0 = today) → Date object
+  const offsetToDate = (m) => {
+    const d = new Date(startDate);
+    d.setMonth(d.getMonth() + m);
+    return d;
+  };
+  // Helper for chart labels — short for axis ticks, long for tooltip header
+  const fmtMonthYear = (m) => {
+    const d = offsetToDate(m);
+    return `${MONTHS_SHORT[d.getMonth()]} ${d.getFullYear()}`;
+  };
+
   // ── Combine into a single net-worth array ──
   const netWorth = useMemoOv(() => {
     const rows = [];
@@ -15210,7 +15278,7 @@ function NetWorthCard({ data }) {
       const nw = cash + invest - debt;
       rows.push({
         m,
-        label: m === 0 ? "Now" : (m % 12 === 0 ? `Y${m/12}` : ""),
+        date: fmtMonthYear(m),
         Cash: Math.round(cash),
         Investments: Math.round(invest),
         Debt: -Math.round(debt), // negative so it stacks below the axis
@@ -15218,7 +15286,7 @@ function NetWorthCard({ data }) {
       });
     }
     return rows;
-  }, [cashMonthly, investMonthly, debtMonthly, horizon]);
+  }, [cashMonthly, investMonthly, debtMonthly, horizon, startDate]);
 
   const today    = netWorth[0];
   const final    = netWorth[netWorth.length - 1];
@@ -15241,7 +15309,7 @@ function NetWorthCard({ data }) {
           Net worth
         </h2>
         <span className="card-tag">
-          today {fmtUSD0(today?.["Net worth"] || 0)} → {Math.round(horizon/12)}y {fmtUSD0(final?.["Net worth"] || 0)}
+          {fmtMonthYear(0)} {fmtUSD0(today?.["Net worth"] || 0)} → {fmtMonthYear(horizon)} {fmtUSD0(final?.["Net worth"] || 0)}
           {change !== 0 && (
             <span style={{ marginLeft: 8, color: change >= 0 ? "var(--positive)" : "var(--negative)" }}>
               {change >= 0 ? "+" : ""}{fmtUSD0(change)}
@@ -15285,12 +15353,31 @@ function NetWorthCard({ data }) {
                 <Recharts.XAxis
                   dataKey="m"
                   tick={{ fill: "var(--ink-3)", fontSize: 11 }}
-                  tickFormatter={(m) => m === 0 ? "Now" : (m % 12 === 0 ? `Y${m/12}` : "")}
+                  tickFormatter={(m) => {
+                    const d = offsetToDate(m);
+                    // Short horizon (≤12 months): show month name. Otherwise show year.
+                    if (horizon <= 12) {
+                      // Every other month to avoid crowding
+                      if (m === 0) return MONTHS_SHORT[d.getMonth()];
+                      if (m % 2 === 0) return MONTHS_SHORT[d.getMonth()];
+                      return "";
+                    }
+                    // ≥24 months: show year at start of each calendar year
+                    if (m === 0) return d.getFullYear().toString();
+                    if (d.getMonth() === startDate.getMonth() && d.getFullYear() !== startDate.getFullYear()) {
+                      return d.getFullYear().toString();
+                    }
+                    return "";
+                  }}
                 />
                 <Recharts.YAxis tick={{ fill: "var(--ink-3)", fontSize: 11 }} tickFormatter={(v) => fmtUSD0(v)} width={70} />
                 <Recharts.Tooltip
                   formatter={(value, name) => [fmtUSD0(value), name]}
-                  labelFormatter={(m) => m === 0 ? "Today" : `Month ${m} (Year ${(m/12).toFixed(1)})`}
+                  labelFormatter={(m) => {
+                    if (m === 0) return `${fmtMonthYear(m)} (today)`;
+                    const yrsFromNow = (m / 12).toFixed(1);
+                    return `${fmtMonthYear(m)} (${yrsFromNow}y from now)`;
+                  }}
                   contentStyle={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 6 }}
                 />
                 <Recharts.Area type="monotone" dataKey="Cash"        stackId="1" stroke="#5A8FA3" fill="#5A8FA3" fillOpacity={0.6} />
