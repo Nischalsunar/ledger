@@ -11431,6 +11431,7 @@ function InvestingCalculator({ profile, getBudgetData }) {
 // Lives at the bottom of the Savings & Investing page so it's discoverable
 // without cluttering the main portfolio editor.
 function CompoundCalculator() {
+  const [open,           setOpen]           = useStateInvest(true);
   const [starting,       setStarting]       = useStateInvest(0);
   const [monthly,        setMonthly]        = useStateInvest(500);
   const [rateMode,       setRateMode]       = useStateInvest("annual"); // "annual" | "monthly"
@@ -11522,90 +11523,85 @@ function CompoundCalculator() {
   const compoundingBonus = final.balance - simpleFinal;
 
   return (
-    <section className="card" style={{ marginTop: 24 }}>
-      <header className="card-head">
-        <h2>Compound interest calculator</h2>
-        <span className="card-tag">Monthly contribution · monthly compounding</span>
+    <section className={"card" + (open ? "" : " is-collapsed")} style={{ marginTop: 24 }}>
+      <header
+        className="card-head"
+        style={{ cursor: "pointer" }}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <h2 style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span className={"debt-card-chevron" + (open ? " is-open" : "")} style={{ pointerEvents: "none" }} aria-hidden="true">▾</span>
+          Compound interest calculator
+        </h2>
+        {open ? (
+          <span className="card-tag">Monthly contribution · monthly compounding</span>
+        ) : (
+          <span className="card-tag">
+            {fmtUSD0(monthly)}/mo · {(rateMode === "annual" ? annualRate : equivAnnualPct).toFixed(1)}%/yr · {years}y → {fmtUSD0(final.balance)}
+          </span>
+        )}
       </header>
-      <div className="card-body">
+      {open && <div className="card-body">
         <div className="compound-grid">
           {/* ─── Inputs column ───────────────────────────────────────── */}
           <div className="compound-inputs">
-            <label className="login-field">
-              <span>Starting balance</span>
-              <div className="text-input-wrap">
-                <span className="text-input-prefix">$</span>
-                <input type="number" className="text-input" min={0} step={100}
-                  value={starting}
-                  onChange={(e) => setStarting(Math.max(0, parseFloat(e.target.value) || 0))} />
-              </div>
-            </label>
+            <Field label="Starting balance" hint="lump sum on day 1 (optional)">
+              <Money value={starting} onChange={(v) => setStarting(Math.max(0, Number(v) || 0))} placeholder="0" />
+            </Field>
 
-            <label className="login-field">
-              <span>Monthly contribution</span>
-              <div className="text-input-wrap">
-                <span className="text-input-prefix">$</span>
-                <input type="number" className="text-input" min={0} step={50}
-                  value={monthly}
-                  onChange={(e) => setMonthly(Math.max(0, parseFloat(e.target.value) || 0))} />
-              </div>
-            </label>
+            <Field label="Monthly contribution" hint="added every month">
+              <Money value={monthly} onChange={(v) => setMonthly(Math.max(0, Number(v) || 0))} placeholder="500" />
+            </Field>
 
-            <div className="login-field">
-              <span>Return rate</span>
-              <div className="view-toggle" style={{ marginBottom: 8 }}>
+            <Field
+              label="Return rate"
+              hint={`≈ ${equivAnnualPct.toFixed(2)}% annual · ${equivMonthlyPct.toFixed(4)}% monthly`}
+            >
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 <Segment value={rateMode} onChange={setRateMode}
                   options={[
                     { value: "annual",  label: "Annual %" },
                     { value: "monthly", label: "Monthly %" },
                   ]} />
-              </div>
-              {rateMode === "annual" ? (
-                <div className="text-input-wrap">
-                  <input type="number" className="text-input" min={0} step={0.1}
+                {rateMode === "annual" ? (
+                  <NumberInput
                     value={annualRate}
-                    onChange={(e) => setAnnualRate(parseFloat(e.target.value) || 0)} />
-                  <span className="text-input-suffix">% / yr</span>
-                </div>
-              ) : (
-                <div className="text-input-wrap">
-                  <input type="number" className="text-input" min={0} step={0.01}
+                    onChange={(v) => setAnnualRate(Math.max(0, Number(v) || 0))}
+                    suffix="% / yr"
+                  />
+                ) : (
+                  <NumberInput
                     value={monthlyRate}
-                    onChange={(e) => setMonthlyRate(parseFloat(e.target.value) || 0)} />
-                  <span className="text-input-suffix">% / mo</span>
-                </div>
-              )}
-              <small className="footnote" style={{ display: "block", marginTop: 4 }}>
-                ≈ <strong>{equivAnnualPct.toFixed(2)}%</strong> annual · <strong>{equivMonthlyPct.toFixed(4)}%</strong> monthly
-              </small>
-            </div>
+                    onChange={(v) => setMonthlyRate(Math.max(0, Number(v) || 0))}
+                    suffix="% / mo"
+                  />
+                )}
+              </div>
+            </Field>
 
-            <label className="login-field">
-              <span>Time horizon (years)</span>
-              <div className="text-input-wrap">
-                <input type="number" className="text-input" min={1} max={60} step={1}
+            <Field label="Time horizon" hint={`${years} year${years === 1 ? "" : "s"} · ${years * 12} months`}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <NumberInput
                   value={years}
-                  onChange={(e) => setYears(Math.max(1, Math.min(60, parseInt(e.target.value) || 1)))} />
-                <span className="text-input-suffix">yr</span>
+                  onChange={(v) => setYears(Math.max(1, Math.min(60, Math.round(Number(v) || 1))))}
+                  suffix="yr"
+                />
+                <input type="range" min={1} max={50} step={1} value={Math.min(50, years)}
+                  onChange={(e) => setYears(parseInt(e.target.value))}
+                  style={{ width: "100%" }} />
               </div>
-              <input type="range" min={1} max={50} step={1} value={Math.min(50, years)}
-                onChange={(e) => setYears(parseInt(e.target.value))}
-                style={{ width: "100%", marginTop: 8 }} />
-            </label>
+            </Field>
 
-            <div className="login-field">
-              <span>Contribute at</span>
-              <div className="view-toggle">
-                <Segment value={contribTiming} onChange={setContribTiming}
-                  options={[
-                    { value: "start", label: "Start of month" },
-                    { value: "end",   label: "End of month" },
-                  ]} />
-              </div>
-              <small className="footnote" style={{ display: "block", marginTop: 4 }}>
-                Start = annuity due (each deposit earns that month's interest).
-              </small>
-            </div>
+            <Field
+              label="Contribute at"
+              hint="Start = annuity due (deposit earns that month's interest)"
+            >
+              <Segment value={contribTiming} onChange={setContribTiming}
+                options={[
+                  { value: "start", label: "Start of month" },
+                  { value: "end",   label: "End of month" },
+                ]} />
+            </Field>
           </div>
 
           {/* ─── Output summary ──────────────────────────────────────── */}
@@ -11685,7 +11681,7 @@ function CompoundCalculator() {
             Reinvested interest compounds — that's what "compounding bonus" measures vs. flat simple interest.
           </p>
         </div>
-      </div>
+      </div>}
     </section>
   );
 }
