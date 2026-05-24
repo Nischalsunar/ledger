@@ -1,5 +1,28 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Ledger - Finance Calculator</title>
-<link rel="preconnect" href="https://fonts.googleapis.com"/><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<!doctype html><html lang="en"><head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Ledger - Personal finance calculator: budget, debt, investing, taxes</title>
+<meta name="description" content="Free personal finance calculator: monthly budget with rent/utility splits, debt payoff (avalanche vs snowball), compound investing projections, federal+state tax estimator, auto loan + total cost of ownership, and a multi-member household view. All math runs in your browser; data syncs across devices via your Google account."/>
+<meta name="theme-color" content="#0A0F0D"/>
+<link rel="canonical" href="https://nischalsunar.github.io/ledger/"/>
+
+<!-- Open Graph -->
+<meta property="og:type" content="website"/>
+<meta property="og:site_name" content="Ledger"/>
+<meta property="og:title" content="Ledger - Personal finance calculator"/>
+<meta property="og:description" content="Budget, debt payoff, compound investing, tax estimator, auto loan, and household split â€” all in one client-side calculator with cross-device sync."/>
+<meta property="og:url" content="https://nischalsunar.github.io/ledger/"/>
+<meta property="og:image" content="https://nischalsunar.github.io/ledger/og-cover.png"/>
+<meta property="og:image:alt" content="Ledger finance calculator dashboard showing budget, take-home pay, and savings projection."/>
+
+<!-- Twitter Card -->
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:title" content="Ledger - Personal finance calculator"/>
+<meta name="twitter:description" content="Budget, debt payoff, compound investing, tax estimator, auto loan, household split. Cross-device sync. Free."/>
+<meta name="twitter:image" content="https://nischalsunar.github.io/ledger/og-cover.png"/>
+
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..700;1,8..60,300..700%26family=Inter+Tight:wght@400;500;600%26display=swap"/>
 <style>
 /* ===== Ledger · finance calculator · dark banking aesthetic ===== */
@@ -5271,6 +5294,58 @@ html[data-color-mode="light"] .date-input { color-scheme: light; }
   margin-top: 4px;
 }
 
+/* ===== Keyboard accessibility — :focus-visible everywhere ===== */
+/* Mouse clicks don't trigger these. Tab key (and other keyboard nav) does.
+   Result: keyboard users see a clear focus ring, mouse users don't get ugly outlines. */
+button:focus-visible,
+.btn-primary:focus-visible,
+.btn-ghost:focus-visible,
+.btn-link:focus-visible,
+.icon-btn:focus-visible,
+.icon-btn-square:focus-visible,
+.segment-btn:focus-visible,
+.split-control-step:focus-visible,
+.port-preset-btn:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.text-input:focus-visible,
+.select:focus-visible,
+input[type="text"]:focus-visible,
+input[type="number"]:focus-visible,
+input[type="email"]:focus-visible,
+input[type="password"]:focus-visible,
+input[type="date"]:focus-visible,
+input[type="range"]:focus-visible,
+.money-input input:focus-visible,
+.split-control-num:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}
+/* Card-head buttons / clickable headers — make the focus ring visible across the whole row */
+.card-head:focus-visible,
+.card-head[role="button"]:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: -2px;
+  border-radius: var(--r-lg);
+}
+/* Hidden checkbox-style toggles: focus the visual sibling */
+input[type="checkbox"]:focus-visible + *,
+input[type="radio"]:focus-visible + * {
+  outline: 2px solid var(--accent-2);
+  outline-offset: 2px;
+}
+
+/* Honor user's reduced-motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001s !important;
+    transition-duration: 0.001s !important;
+  }
+}
+
 /* ===== Compound interest calculator ===== */
 .compound-grid {
   display: grid;
@@ -5397,7 +5472,18 @@ html[data-color-mode="light"] .date-input { color-scheme: light; }
 
 </style>
 <script>(function () { try { var mode = localStorage.getItem("ledger:colorMode"); if (mode !== "dark") { document.documentElement.dataset.colorMode = "light"; var v = {"--bg":"#F5F2EC","--bg-2":"#EEEAE0","--surface":"#FFFFFF","--surface-2":"#FAF7EF","--border":"#E5E0D2","--border-2":"#D3CDBD","--ink":"#1A1F1C","--ink-2":"#3F423E","--ink-3":"#6B7068","--ink-4":"#A0A398","--accent":"#1B4D3E","--accent-2":"#2C6E58","--accent-dim":"#A8C5B7","--accent-bg":"#E5EDE8","--gold":"#A8895A","--gold-dim":"#D4C39A","--positive":"#2C6E58","--negative":"#B2452A","--ai-fab-fg":"#FFFFFF"}; var s = document.documentElement.style; for (var k in v) s.setProperty(k, v[k]); } else { document.documentElement.dataset.colorMode = "dark"; } } catch (e) {} })();</script>
-</head><body><div id="root"></div>
+</head>
+<body>
+<noscript>
+  <div style="max-width:640px;margin:60px auto;padding:24px;font-family:Georgia,serif;line-height:1.5;color:#1A1F1C;background:#FAF7EF;border:1px solid #E5E0D2;border-radius:8px">
+    <h1 style="margin-top:0;font-size:28px">Ledger requires JavaScript</h1>
+    <p>This is a client-side personal finance calculator â€” every number is computed in your browser, with nothing sent to a server. That means it needs JavaScript enabled.</p>
+    <p><strong>What it does:</strong> monthly budget, debt payoff strategies (avalanche/snowball), compound investing projections, federal + state tax estimates, auto loan amortization, and shared-household expense splitting.</p>
+    <p>Please enable JavaScript and refresh this page to use the calculator.</p>
+    <p style="font-size:13px;color:#6B7068;margin-top:24px">Source code: <a href="https://github.com/nischalsunar/ledger" style="color:#1B4D3E">github.com/nischalsunar/ledger</a></p>
+  </div>
+</noscript>
+<div id="root"></div>
 <script type="importmap">{"imports":{"react":"https://esm.sh/react@18.3.1","react/":"https://esm.sh/react@18.3.1/","react-dom":"https://esm.sh/react-dom@18.3.1","react-dom/":"https://esm.sh/react-dom@18.3.1/","react-dom/client":"https://esm.sh/react-dom@18.3.1/client","framer-motion":"https://esm.sh/framer-motion@11.5.4?external=react,react-dom","recharts":"https://esm.sh/recharts@2.13.0?external=react,react-dom"}}</script>
 <script type="module">
 try {
@@ -8506,6 +8592,125 @@ function downloadData() {
   URL.revokeObjectURL(url);
 }
 
+// ── URL snapshot share ──────────────────────────────────────────────────
+// Encode a minimal, *shareable* slice of state into the URL hash. We deliberately
+// share only inputs (salary, expenses, debts, investments) — not Firestore UIDs,
+// admin flags, or local-account credentials. Decode runs on every page load.
+const SHARE_KEYS = ["ledger:profile", "ledger:budget", "ledger:debt", "ledger:invest-v2", "ledger:auto"];
+
+function buildSnapshotURL() {
+  const snap = { v: 1, data: {} };
+  for (const k of SHARE_KEYS) {
+    const v = localStorage.getItem(k);
+    if (v) snap.data[k] = JSON.parse(v);
+  }
+  // Strip authentication and provider fields if they slipped into profile
+  if (snap.data["ledger:profile"]) {
+    delete snap.data["ledger:profile"].photoURL;
+    delete snap.data["ledger:profile"].cloudUid;
+  }
+  // base64-url encode (no '+' '/' '=' to keep URLs clean)
+  const json = JSON.stringify(snap);
+  const b64 = btoa(unescape(encodeURIComponent(json)))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const base = window.location.origin + window.location.pathname;
+  return `${base}#s=${b64}`;
+}
+
+function tryHydrateFromHash() {
+  const hash = window.location.hash;
+  const m = hash.match(/[#&]s=([A-Za-z0-9_-]+)/);
+  if (!m) return null;
+  try {
+    const b64 = m[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = b64 + "===".slice((b64.length + 3) % 4);
+    const json = decodeURIComponent(escape(atob(padded)));
+    const snap = JSON.parse(json);
+    if (snap?.v !== 1 || !snap.data) return null;
+    for (const k of SHARE_KEYS) {
+      if (snap.data[k]) localStorage.setItem(k, JSON.stringify(snap.data[k]));
+    }
+    return Object.keys(snap.data);
+  } catch { return null; }
+}
+
+// Run hydration ONCE at module load — before React mounts components that
+// read from localStorage. Strip the s= param after consuming so refreshes
+// don't keep re-applying a stale snapshot.
+(function consumeSnapshotHashOnBoot() {
+  if (typeof window === "undefined") return;
+  const loaded = tryHydrateFromHash();
+  if (loaded && loaded.length) {
+    const cleanHash = window.location.hash.replace(/[#&]s=[A-Za-z0-9_-]+/, "");
+    window.history.replaceState(null, "", window.location.pathname + (cleanHash || "#overview"));
+    // Signal the user that a snapshot was applied
+    window.__ledgerSnapshotApplied = loaded;
+  }
+})();
+
+async function copySnapshotURL() {
+  const url = buildSnapshotURL();
+  try {
+    await navigator.clipboard.writeText(url);
+    return { ok: true, url };
+  } catch {
+    return { ok: false, url };
+  }
+}
+
+// ── CSV export ──────────────────────────────────────────────────────────
+// Flattens the entire ledger state into a tidy CSV: one row per key/value pair.
+// Each storage namespace gets a "section" column so the file is filterable in
+// Excel/Sheets. Nested objects are expanded with dot-paths.
+function flattenObject(obj, prefix = "") {
+  const out = {};
+  if (obj == null || typeof obj !== "object") {
+    out[prefix || "value"] = obj;
+    return out;
+  }
+  for (const [k, v] of Object.entries(obj)) {
+    const key = prefix ? `${prefix}.${k}` : k;
+    if (Array.isArray(v)) {
+      v.forEach((item, i) => Object.assign(out, flattenObject(item, `${key}[${i}]`)));
+    } else if (v && typeof v === "object") {
+      Object.assign(out, flattenObject(v, key));
+    } else {
+      out[key] = v;
+    }
+  }
+  return out;
+}
+
+function csvEscape(v) {
+  if (v == null) return "";
+  const s = String(v);
+  // Quote if it contains a comma, quote, or newline; escape internal quotes.
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function downloadCSV() {
+  const data = collectAllData();
+  const rows = [["section", "key", "value"]];
+  for (const [section, payload] of Object.entries(data.data)) {
+    const flat = flattenObject(payload);
+    for (const [key, value] of Object.entries(flat)) {
+      rows.push([section, key, value]);
+    }
+  }
+  // Prepend a UTF-8 BOM so Excel opens the file with the right encoding.
+  const csv = "﻿" + rows.map((r) => r.map(csvEscape).join(",")).join("\r\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const date = new Date().toISOString().slice(0, 10);
+  a.href = url;
+  a.download = `ledger-${date}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 function importData(file, onComplete) {
   const reader = new FileReader();
   reader.onload = (e) => {
@@ -8565,8 +8770,30 @@ function DataButton() {
           <button className="data-menu-item" onClick={() => { downloadData(); setStatus({ kind: "ok", message: "Backup downloaded." }); }}>
             <span className="data-menu-glyph">↓</span>
             <span>
-              <div className="data-menu-item-title">Download backup</div>
+              <div className="data-menu-item-title">Download backup (JSON)</div>
               <div className="data-menu-item-sub">Save all your numbers to a .json file</div>
+            </span>
+          </button>
+
+          <button className="data-menu-item" onClick={() => { downloadCSV(); setStatus({ kind: "ok", message: "CSV exported." }); }}>
+            <span className="data-menu-glyph">📊</span>
+            <span>
+              <div className="data-menu-item-title">Export as CSV</div>
+              <div className="data-menu-item-sub">Open in Excel / Google Sheets — one row per field</div>
+            </span>
+          </button>
+
+          <button className="data-menu-item" onClick={async () => {
+            const res = await copySnapshotURL();
+            setStatus(res.ok
+              ? { kind: "ok", message: "Snapshot URL copied — paste anywhere to share this scenario." }
+              : { kind: "err", message: "Copy failed. URL: " + res.url }
+            );
+          }}>
+            <span className="data-menu-glyph">🔗</span>
+            <span>
+              <div className="data-menu-item-title">Copy share link</div>
+              <div className="data-menu-item-sub">Anyone opening it sees your salary, expenses, debts, and investments — read-only</div>
             </span>
           </button>
 
@@ -10526,11 +10753,24 @@ const RETURN_PERIODS = {
   yearly:  { label: "Yearly",   per: 1,  defaultHorizon: "long"  },
 };
 
+// Cap any single balance value at $999,999,999,999 so absurd inputs (e.g. 50% monthly
+// return × 60 years) don't render as Infinity or NaN. The cap is high enough not to
+// affect any realistic projection but low enough to stay a finite, formattable number.
+const MAX_BAL = 1e12;
+function safeBal(v) {
+  if (!isFinite(v) || isNaN(v)) return 0;
+  if (v > MAX_BAL) return MAX_BAL;
+  if (v < -MAX_BAL) return -MAX_BAL;
+  return v;
+}
+
 // Convert a per-period rate (e.g. 0.8% monthly) into an annual rate for the projection math.
 // returnInput is the user-entered decimal for one period (0.008 = 0.8%).
 function periodToAnnual(returnInput, period) {
   const per = RETURN_PERIODS[period]?.per || 1;
-  return Math.pow(1 + (returnInput || 0), per) - 1;
+  // Clamp the input rate to [-99%, 1000% per period] so Math.pow doesn't overflow.
+  const r = Math.max(-0.99, Math.min(10, Number(returnInput) || 0));
+  return Math.pow(1 + r, per) - 1;
 }
 function annualToPeriod(annualRate, period) {
   const per = RETURN_PERIODS[period]?.per || 1;
@@ -10622,13 +10862,13 @@ function computeInvestmentProjection(years, portfolio, overrideAnnualSavings) {
         const monthly = Number(inv.principle) || 0;
         for (let m = 0; m < months; m++) {
           bal += monthly;
-          bal = bal * (1 + mRate);
+          bal = safeBal(bal * (1 + mRate));
         }
-        invBals[i] = bal;
+        invBals[i] = safeBal(bal);
       } else {
         // Lump-sum principle already in invBals[i] on first iteration. Now grow annually
         // and add this year's share of budget surplus.
-        invBals[i] = invBals[i] * (1 + (inv.returnRate || 0)) + baseSavings * inv.pct * factor;
+        invBals[i] = safeBal(invBals[i] * (1 + (inv.returnRate || 0)) + baseSavings * inv.pct * factor);
       }
     });
     rows.push({
@@ -10680,7 +10920,7 @@ function computeMonthlyInvestmentProjection(years, portfolio, overrideMonthlySav
       emergencyBal += mEm;
       reserveBal   += mRe;
       migrated.forEach((inv, i) => {
-        invBals[i] = invBals[i] * (1 + monthlyRates[i]) + mInv[i];
+        invBals[i] = safeBal(invBals[i] * (1 + monthlyRates[i]) + mInv[i]);
       });
       // True contribution this month = budget portion + compound principles + any lump for first month
       const monthSavings = monthlySavings + compoundContribPerMonth + lumpContributedFirstMonth;
@@ -11608,9 +11848,9 @@ function CompoundCalculator() {
       if (contribTiming === "start") {
         bal += Number(monthly) || 0;
         contributed += Number(monthly) || 0;
-        bal = bal * (1 + effMonthlyRate);
+        bal = safeBal(bal * (1 + effMonthlyRate));
       } else {
-        bal = bal * (1 + effMonthlyRate);
+        bal = safeBal(bal * (1 + effMonthlyRate));
         bal += Number(monthly) || 0;
         contributed += Number(monthly) || 0;
       }
