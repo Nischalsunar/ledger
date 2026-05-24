@@ -879,7 +879,56 @@ input, select { font: inherit; color: inherit; }
   opacity: 0.7;
 }
 
+/* Shared-housing grouping (rent + utilities together) */
+.onb-shared-housing {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.onb-shared-head {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.onb-shared-hint {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--ink-3);
+  font-style: italic;
+  text-transform: none;
+  letter-spacing: 0;
+  margin-left: 4px;
+}
+
 /* Rent split inside wizard */
+.onb-split-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 0;
+}
+.onb-split-line strong {
+  font-size: 18px;
+  font-family: var(--display);
+  color: var(--accent-2);
+}
+.onb-split-line.onb-split-total {
+  border-top: 1px dashed var(--border);
+  padding-top: 8px;
+  margin-top: 4px;
+}
+.onb-split-line.onb-split-total strong {
+  font-size: 20px;
+  color: var(--ink);
+}
+
 .onb-split-box {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -12660,41 +12709,75 @@ function ExpensesPhase({ data, setData }) {
   ];
   const subsTotal = subs.reduce((a, s) => a + (Number(s.amount) || 0), 0);
 
-  // Rent split — full rent + N people. We save the user's share into expenses.rent.
-  const splitOn       = !!exp.splitRent;
-  const fullRent      = exp.rentFull != null ? exp.rentFull : exp.rent;
-  const peopleCount   = exp.rentPeople || 2;
-  const computedShare = splitOn ? Math.round(fullRent / Math.max(1, peopleCount)) : fullRent;
-  // Whenever any split input changes, recompute exp.rent (the saved share)
+  // Shared-housing split — applies to BOTH rent AND utilities since they're typically
+  // shared the same way among roommates. We save each user's share into exp.rent / exp.utilities.
+  const splitOn      = !!exp.splitRent;
+  const fullRent     = exp.rentFull      != null ? exp.rentFull      : exp.rent;
+  const fullUtil     = exp.utilitiesFull != null ? exp.utilitiesFull : exp.utilities;
+  const peopleCount  = exp.rentPeople || 2;
+  const splitMethod  = exp.splitMethod || "equal";
+  const customPct    = exp.rentShareLast != null ? exp.rentShareLast : Math.round(100 / peopleCount);
+
+  const shareFor = (full) => {
+    if (!splitOn) return full;
+    if (splitMethod === "custom") return Math.round((full * customPct) / 100);
+    return Math.round(full / Math.max(1, peopleCount));
+  };
+  const rentShare = shareFor(fullRent || 0);
+  const utilShare = shareFor(fullUtil || 0);
+
+  // Keep the saved per-user shares in sync whenever any split input changes
   React.useEffect(() => {
     if (splitOn) {
-      const share = Math.round((exp.rentFull || 0) / Math.max(1, peopleCount));
-      if (share !== exp.rent) upd("rent", share);
+      if (rentShare !== exp.rent)      upd("rent", rentShare);
+      if (utilShare !== exp.utilities) upd("utilities", utilShare);
     } else {
-      if (exp.rentFull != null && exp.rentFull !== exp.rent) upd("rent", exp.rentFull);
+      if (exp.rentFull      != null && exp.rentFull      !== exp.rent)      upd("rent", exp.rentFull);
+      if (exp.utilitiesFull != null && exp.utilitiesFull !== exp.utilities) upd("utilities", exp.utilitiesFull);
     }
-  }, [splitOn, exp.rentFull, peopleCount]);
+  }, [splitOn, exp.rentFull, exp.utilitiesFull, peopleCount, splitMethod, customPct]);
 
   return (
     <div className="onb-form">
-      <Field label="Rent / mortgage" hint={splitOn ? "full monthly amount (your share is calculated below)" : "monthly"}>
-        <Money
-          value={fullRent}
-          onChange={(v) => {
-            upd("rentFull", v);
-            if (!splitOn) upd("rent", v);
-          }}
-          placeholder="1,500"
-        />
-      </Field>
+      <div className="onb-shared-housing">
+        <div className="onb-shared-head">
+          Shared housing costs
+          <span className="onb-shared-hint">— rent & utilities split the same way</span>
+        </div>
+        <div className="row-2">
+          <Field label="Rent / mortgage" hint={splitOn ? "full monthly amount" : "monthly"}>
+            <Money
+              value={fullRent}
+              onChange={(v) => {
+                upd("rentFull", v);
+                if (!splitOn) upd("rent", v);
+              }}
+              placeholder="1,500"
+            />
+          </Field>
+          <Field label="Utilities" hint={splitOn ? "full monthly amount" : "water, power, gas"}>
+            <Money
+              value={fullUtil}
+              onChange={(v) => {
+                upd("utilitiesFull", v);
+                if (!splitOn) upd("utilities", v);
+              }}
+              placeholder="200"
+            />
+          </Field>
+        </div>
+      </div>
 
-      <Field label="Do you split rent / shared expenses?" hint="roommates, partner, family">
+      <Field label="Do you split rent / utilities with others?" hint="roommates, partner, family">
         <Segment
           value={splitOn ? "yes" : "no"}
           onChange={(v) => {
             const on = v === "yes";
             upd("splitRent", on);
-            if (on && !exp.rentFull) upd("rentFull", exp.rent || 0);
+            if (on) {
+              if (!exp.rentFull)      upd("rentFull",      exp.rent || 0);
+              if (!exp.utilitiesFull) upd("utilitiesFull", exp.utilities || 0);
+            }
           }}
           options={[
             { value: "no",  label: "No, it's just me" },
@@ -12716,7 +12799,7 @@ function ExpensesPhase({ data, setData }) {
             </Field>
             <Field label="Split method">
               <Segment
-                value={exp.splitMethod || "equal"}
+                value={splitMethod}
                 onChange={(v) => upd("splitMethod", v)}
                 options={[
                   { value: "equal",  label: "Equal" },
@@ -12725,38 +12808,45 @@ function ExpensesPhase({ data, setData }) {
               />
             </Field>
           </div>
-          {exp.splitMethod === "custom" ? (
-            <Field label="Your share" hint="% of total rent">
+          {splitMethod === "custom" && (
+            <Field label="Your share" hint="% of full amounts (applies to both rent and utilities)">
               <NumberInput
-                value={exp.rentShareLast != null ? exp.rentShareLast : Math.round(100 / peopleCount)}
-                onChange={(v) => {
-                  const pct = Math.max(0, Math.min(100, v));
-                  upd("rentShareLast", pct);
-                  upd("rent", Math.round((fullRent * pct) / 100));
-                }}
+                value={customPct}
+                onChange={(v) => upd("rentShareLast", Math.max(0, Math.min(100, v)))}
                 suffix="%"
               />
             </Field>
-          ) : (
-            <div className="onb-split-result">
-              <span>Your share:</span>
-              <strong>${computedShare.toLocaleString()}/mo</strong>
+          )}
+          <div className="onb-split-result">
+            <div className="onb-split-line">
+              <span>Your rent:</span>
+              <strong>${rentShare.toLocaleString()}/mo</strong>
               <span className="onb-split-formula">
-                (${(fullRent || 0).toLocaleString()} ÷ {peopleCount} people)
+                {splitMethod === "custom"
+                  ? `(${customPct}% of $${(fullRent||0).toLocaleString()})`
+                  : `($${(fullRent||0).toLocaleString()} ÷ ${peopleCount})`}
               </span>
             </div>
-          )}
+            <div className="onb-split-line">
+              <span>Your utilities:</span>
+              <strong>${utilShare.toLocaleString()}/mo</strong>
+              <span className="onb-split-formula">
+                {splitMethod === "custom"
+                  ? `(${customPct}% of $${(fullUtil||0).toLocaleString()})`
+                  : `($${(fullUtil||0).toLocaleString()} ÷ ${peopleCount})`}
+              </span>
+            </div>
+            <div className="onb-split-line onb-split-total">
+              <span>Total your share:</span>
+              <strong>${(rentShare + utilShare).toLocaleString()}/mo</strong>
+            </div>
+          </div>
         </div>
       )}
 
-      <div className="row-2">
-        <Field label="Groceries" hint="food at home">
-          <Money value={exp.groceries} onChange={(v) => upd("groceries", v)} placeholder="500" />
-        </Field>
-        <Field label="Utilities" hint="water, power, gas">
-          <Money value={exp.utilities} onChange={(v) => upd("utilities", v)} placeholder="200" />
-        </Field>
-      </div>
+      <Field label="Groceries" hint="food at home">
+        <Money value={exp.groceries} onChange={(v) => upd("groceries", v)} placeholder="500" />
+      </Field>
 
       <Field
         label={`Subscriptions ${subsTotal > 0 ? `· $${subsTotal}/mo` : ""}`}
