@@ -5308,6 +5308,153 @@ html[data-color-mode="light"] .date-input { color-scheme: light; }
   cursor: progress;
 }
 
+/* ===== Debt optimizer: rationale, what-if, rules, sanity warning ===== */
+.debt-rationale {
+  margin-top: 14px;
+  padding: 12px 14px;
+  background: var(--accent-bg);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r);
+}
+.debt-rationale-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+.debt-rationale-priority {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface);
+}
+.debt-rationale-priority-debt     { color: var(--negative); }
+.debt-rationale-priority-savings  { color: var(--positive); }
+.debt-rationale-priority-balanced { color: var(--gold); }
+.debt-rationale-split {
+  font-family: var(--display);
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.debt-rationale-reason {
+  font-size: 12px;
+  color: var(--ink-2);
+  line-height: 1.5;
+}
+.debt-rationale-constraint {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border-2);
+  font-size: 11px;
+  color: var(--accent-2);
+}
+
+.debt-whatif {
+  margin-top: 10px;
+}
+.debt-whatif summary {
+  font-size: 12px;
+  color: var(--ink-3);
+  cursor: pointer;
+  user-select: none;
+  padding: 4px 0;
+}
+.debt-whatif summary:hover { color: var(--accent-2); }
+.debt-whatif-body {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  background: var(--surface-2);
+  border-radius: var(--r);
+}
+.debt-whatif-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  padding: 4px 0;
+}
+.debt-whatif-row.is-changed {
+  color: var(--accent-2);
+  font-weight: 500;
+}
+.debt-whatif-label { color: var(--ink-2); }
+.debt-whatif-result {
+  font-family: var(--display);
+  font-feature-settings: "tnum";
+}
+.debt-whatif-tag {
+  margin-left: 8px;
+  font-size: 10px;
+  color: var(--ink-3);
+  font-style: italic;
+  font-family: var(--sans);
+}
+
+.debt-rules {
+  margin-top: 10px;
+}
+.debt-rules summary {
+  font-size: 12px;
+  color: var(--ink-3);
+  cursor: pointer;
+  user-select: none;
+  padding: 4px 0;
+}
+.debt-rules summary:hover { color: var(--accent-2); }
+.debt-rules-body {
+  margin-top: 8px;
+  padding: 12px;
+  background: var(--surface-2);
+  border-radius: var(--r);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.debt-rule-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: center;
+}
+.debt-rule-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.debt-rule-hint {
+  font-size: 10.5px;
+  color: var(--ink-3);
+  font-style: italic;
+  font-weight: 400;
+}
+
+.debt-sanity-warn {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: rgba(215, 118, 98, 0.10);
+  border: 1px solid var(--negative);
+  border-radius: var(--r);
+  color: var(--negative);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.debt-sanity-detail {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
 /* ===== Track-in-Overview toggle (pill switch) ===== */
 .track-toggle {
   display: inline-flex;
@@ -13784,6 +13931,81 @@ function simulatePayoff(debts, extra, strategy) {
   return { months: month, totalInterest, perDebt: list };
 }
 
+// ─── Pure optimizer ──────────────────────────────────────────────────────
+// Computes the optimal debt/savings split AND returns a rationale object
+// that the UI displays. Pure: no React, no side effects, easy to test.
+//
+// Inputs:
+//   debts       — array of { balance, apr, minPayment }
+//   cash        — monthly $ available above minimums
+//   savingsAPY  — decimal (0.04 = 4%)
+//   constraints — { minEmergencyFund, clearSmallDebtsFirst, smallDebtThreshold, maxDebtPctForcedSavings }
+//   currentLiquid — current liquid cash (for emergency-fund check); 0 by default
+//
+// Returns:
+//   { pct, priority, reason, constraintHit }
+//
+function optimizeAllocation({ debts, cash, savingsAPY, constraints, currentLiquid = 0 }) {
+  const con = constraints || {};
+  const active = (debts || []).filter((d) => (Number(d.balance) || 0) > 0);
+
+  // Weighted-average APR across all live debts
+  const totalBal = active.reduce((a, d) => a + (Number(d.balance) || 0), 0);
+  const avgApr = totalBal > 0
+    ? active.reduce((a, d) => a + (Number(d.apr) || 0) * (Number(d.balance) || 0), 0) / totalBal
+    : 0;
+  const gap = avgApr - (Number(savingsAPY) || 0);
+  const gapPct = gap * 100;
+
+  // Default no constraint was hit
+  let constraintHit = null;
+
+  // CONSTRAINT 1: build emergency fund first
+  if ((con.minEmergencyFund || 0) > 0 && currentLiquid < con.minEmergencyFund) {
+    return {
+      pct: 0.05,
+      priority: "Savings",
+      reason: `Build emergency fund first ($${currentLiquid.toLocaleString()} of $${con.minEmergencyFund.toLocaleString()} target)`,
+      constraintHit: "emergency",
+    };
+  }
+
+  // CONSTRAINT 2: clear small debts first (snowball-style)
+  if (con.clearSmallDebtsFirst) {
+    const smallDebts = active.filter((d) => (Number(d.balance) || 0) > 0 && (Number(d.balance) || 0) < (con.smallDebtThreshold || 0));
+    if (smallDebts.length > 0) {
+      return {
+        pct: 0.9,
+        priority: "Debt",
+        reason: `${smallDebts.length} small debt${smallDebts.length !== 1 ? "s" : ""} under $${con.smallDebtThreshold} — clearing those first for the psychological win`,
+        constraintHit: "smallDebt",
+      };
+    }
+  }
+
+  // Default math: bucket by gap
+  let pct = 0.5;
+  let priority = "Balanced";
+  if (gap > 0.05)        { pct = 0.9;  priority = "Debt"; }
+  else if (gap > 0.02)   { pct = 0.75; priority = "Debt"; }
+  else if (gap > -0.01)  { pct = 0.5;  priority = "Balanced"; }
+  else                   { pct = 0.25; priority = "Savings"; }
+
+  // CONSTRAINT 3: cap max debt share so user always builds some liquidity
+  const cap = con.maxDebtPctForcedSavings != null ? con.maxDebtPctForcedSavings : 0.95;
+  if (pct > cap) {
+    pct = cap;
+    constraintHit = "maxDebtShare";
+  }
+
+  const reason = totalBal === 0
+    ? "No active debts — everything goes to savings"
+    : `Avg debt APR ${(avgApr * 100).toFixed(1)}% vs HYSA ${((Number(savingsAPY) || 0) * 100).toFixed(1)}% = ${gapPct.toFixed(1)}% gap`;
+
+  return { pct, priority, reason, constraintHit };
+}
+window.optimizeAllocation = optimizeAllocation;
+
 function DebtPayoff({ getBudgetData }) {
   const todayISO = (() => {
     const d = new Date();
@@ -13800,6 +14022,18 @@ function DebtPayoff({ getBudgetData }) {
   const [savingsAPY, setSavingsAPY] = useStateDebt(0.04);
   const [paymentFreq, setPaymentFreq] = useStateDebt(1); // months
   const [strategy, setStrategy] = useStateDebt("avalanche");
+  // Manual-mode + constraint configuration. Both persist via the existing
+  // ledger:debt localStorage save effect; both have sensible defaults so the
+  // optimizer can run unchanged when the user doesn't touch these.
+  const [manualMode, setManualMode] = useStateDebt(false);
+  const [constraints, setConstraints] = useStateDebt({
+    minEmergencyFund: 1000,         // floor: don't touch debt extras until this much liquid
+    clearSmallDebtsFirst: true,     // snowball-style psychological win
+    smallDebtThreshold: 500,        // a "small" debt = under this balance
+    maxDebtPctForcedSavings: 0.95,  // never put 100% to debt — always keep some liquid
+  });
+  const updConstraint = (k, v) => setConstraints((c) => ({ ...c, [k]: v }));
+  const [showRules, setShowRules] = useStateDebt(false);
   // Per-debt expand/collapse state (not persisted — just a UI preference for the session)
   const [expandedDebts, setExpandedDebts] = useStateDebt({}); // { [idx]: bool }
   const isExpanded = (i) => expandedDebts[i] !== false; // default: expanded
@@ -13820,12 +14054,62 @@ function DebtPayoff({ getBudgetData }) {
     return Math.max(0, Math.round(monthlyTakeHome - monthlyExp));
   }, [budgetData?.tax?.takeHome, JSON.stringify(budgetData?.expenses || {})]);
 
+  // Read user's current liquid cash (sum of accounts) for the emergency-fund constraint.
+  const currentLiquid = useMemoDebt(() => {
+    try {
+      const accounts = JSON.parse(localStorage.getItem("ledger:accounts") || "[]");
+      return accounts.reduce((a, x) => a + (Number(x.balance) || 0), 0);
+    } catch { return 0; }
+  }, [tick]);
+
+  // Live optimization result — always computed so rationale + what-if can be
+  // displayed without clicking Optimize.
+  const optimization = useMemoDebt(() => {
+    if (manualMode) return null;
+    return optimizeAllocation({
+      debts, cash: spareCash, savingsAPY, constraints, currentLiquid,
+    });
+  }, [debts, spareCash, savingsAPY, constraints, currentLiquid, manualMode]);
+
+  // What-if scenarios: re-run the optimizer with shifted rates.
+  const whatIfScenarios = useMemoDebt(() => {
+    if (manualMode) return [];
+    const baseline = optimization?.pct;
+    const scenarios = [
+      { key: "apy-down", label: "HYSA drops 1%", apy: Math.max(0, savingsAPY - 0.01), aprDelta: 0 },
+      { key: "apy-up",   label: "HYSA rises 1%", apy: savingsAPY + 0.01,               aprDelta: 0 },
+      { key: "apr-up",   label: "Debt APR +5%",  apy: savingsAPY,                       aprDelta: 0.05 },
+      { key: "refi",     label: "Refi highest debt −2%", apy: savingsAPY,               aprDelta: 0, refiTopApr: -0.02 },
+    ];
+    return scenarios.map((s) => {
+      let scenarioDebts = debts.map((d) => ({ ...d, apr: (Number(d.apr) || 0) + s.aprDelta }));
+      if (s.refiTopApr) {
+        // Find highest-APR debt and reduce
+        const idx = scenarioDebts.reduce((bestIdx, d, i, arr) =>
+          (Number(d.apr) || 0) > (Number(arr[bestIdx].apr) || 0) ? i : bestIdx, 0);
+        if (scenarioDebts[idx]) scenarioDebts[idx] = {
+          ...scenarioDebts[idx],
+          apr: Math.max(0, (Number(scenarioDebts[idx].apr) || 0) + s.refiTopApr),
+        };
+      }
+      const r = optimizeAllocation({
+        debts: scenarioDebts, cash: spareCash, savingsAPY: s.apy, constraints, currentLiquid,
+      });
+      return {
+        ...s,
+        result: r,
+        changed: baseline != null && Math.abs((r.pct || 0) - baseline) > 0.001,
+      };
+    });
+  }, [debts, spareCash, savingsAPY, constraints, currentLiquid, optimization?.pct, manualMode]);
+
+
   useEffectDebt(() => {
     if (autoSpare && budgetLeftover != null) setSpareCash(budgetLeftover);
   }, [autoSpare, budgetLeftover]);
 
   // Force re-read of budget data periodically so the link stays live.
-  const [, setTick] = useStateDebt(0);
+  const [tick, setTick] = useStateDebt(0);
   useEffectDebt(() => {
     const id = setInterval(() => setTick((t) => t + 1), 1500);
     return () => clearInterval(id);
@@ -13842,6 +14126,10 @@ function DebtPayoff({ getBudgetData }) {
         typeof saved.savingsAPY === "number" && setSavingsAPY(saved.savingsAPY);
         typeof saved.paymentFreq === "number" && setPaymentFreq(saved.paymentFreq);
         saved.strategy && setStrategy(saved.strategy);
+        if (typeof saved.manualMode === "boolean") setManualMode(saved.manualMode);
+        if (saved.constraints && typeof saved.constraints === "object") {
+          setConstraints((c) => ({ ...c, ...saved.constraints }));
+        }
         if (typeof saved.customDebtAmount === "number") {
           // ── Migration ──
           // Old semantic: customDebtAmount = extra above minimums (smaller number).
@@ -13864,8 +14152,9 @@ function DebtPayoff({ getBudgetData }) {
       debts, spareCash, autoSpare, debtPct, savingsAPY, paymentFreq, strategy,
       customDebtAmount,
       customDebtIsTotal: true, // mark new-semantic save so migration runs once
+      manualMode, constraints,
     }));
-  }, [debts, spareCash, autoSpare, debtPct, savingsAPY, paymentFreq, strategy, customDebtAmount]);
+  }, [debts, spareCash, autoSpare, debtPct, savingsAPY, paymentFreq, strategy, customDebtAmount, manualMode, constraints]);
 
   // Compute total of monthly minimums up-front — used both to derive "extra"
   // from a user-entered TOTAL and to display the consistent breakdown.
@@ -13888,6 +14177,31 @@ function DebtPayoff({ getBudgetData }) {
     : Math.round(spareCash * debtPct);
   const toSavings = Math.max(0, Math.round(spareCash) - extra);
   const effectivePct = spareCash > 0 ? extra / spareCash : 0;
+
+  // Sanity check — does (bills + minimums + extra + savings) exceed take-home?
+  // Warns the user if their commitments don't fit their take-home.
+  const sanityCheck = useMemoDebt(() => {
+    if (!budgetData?.tax?.takeHome) return null;
+    const monthlyTakeHome = budgetData.tax.takeHome / 12;
+    const monthlyBills = window.sumExpenses ? window.sumExpenses(budgetData.expenses) : 0;
+    const minTotalNow = debts.reduce((a, d) => a + (Number(d.minPayment) || 0), 0);
+    const otherLoanInBudget = Number(budgetData.expenses?.otherLoan) || 0;
+    // If user has tracked debts AND budget already counts an "Other loan", strip
+    // the budget copy so we don't double-count.
+    const adjustedBills = debts.length > 0 ? monthlyBills - otherLoanInBudget : monthlyBills;
+    const totalOut = adjustedBills + minTotalNow + extra + toSavings;
+    const gap = totalOut - monthlyTakeHome;
+    return {
+      takeHome: monthlyTakeHome,
+      bills: adjustedBills,
+      debtMins: minTotalNow,
+      extraToDebt: extra,
+      savings: toSavings,
+      totalOut,
+      gap,
+      overspent: gap > 1, // float tolerance
+    };
+  }, [budgetData?.tax?.takeHome, JSON.stringify(budgetData?.expenses || {}), debts, extra, toSavings]);
 
   const updDebt = (i, k, v) => setDebts((d) => d.map((x, j) => j === i ? { ...x, [k]: v } : x));
   const removeDebt = (i) => setDebts((d) => d.filter((_, j) => j !== i));
@@ -13975,25 +14289,23 @@ function DebtPayoff({ getBudgetData }) {
                 </div>
                 <button
                   className="btn-primary debt-optimize-btn"
+                  disabled={manualMode}
+                  title={manualMode ? "Manual mode is on — disable it to let the optimizer adjust your split." : ""}
                   onClick={() => {
-                    // Use whichever cash source is available — budget surplus, current spareCash, or fallback to minimums total
-                    let cash = (budgetLeftover != null && budgetLeftover > 0)
+                    if (manualMode) return;
+                    // Pick cash source
+                    const cash = (budgetLeftover != null && budgetLeftover > 0)
                       ? budgetLeftover
                       : (spareCash > 0 ? spareCash : Math.max(500, totals.min));
                     setSpareCash(cash);
                     setAutoSpare(budgetLeftover != null && budgetLeftover > 0);
-                    // Smart split: heavy on whichever side has the better rate
-                    const avgApr = debts.length > 0
-                      ? debts.reduce((a, d) => a + (d.apr * d.balance), 0) / Math.max(1, debts.reduce((a, d) => a + d.balance, 0))
-                      : 0;
-                    let pct = 0.5;
-                    if (avgApr - savingsAPY > 0.05) pct = 0.9;
-                    else if (avgApr - savingsAPY > 0.02) pct = 0.75;
-                    else if (avgApr - savingsAPY > -0.01) pct = 0.5;
-                    else pct = 0.25;
-                    setDebtPct(pct);
+                    // Run the pure optimizer with constraints
+                    const result = optimizeAllocation({
+                      debts, cash, savingsAPY, constraints, currentLiquid,
+                    });
+                    setDebtPct(result.pct);
                     setCustomDebtAmount(null);
-                    // Also auto-estimate each debt's min payment from its type
+                    // Only auto-estimate min payments for debts that have 0 — never override user values
                     setDebts((arr) => arr.map((d) => ({
                       ...d,
                       minPayment: d.minPayment > 0 ? d.minPayment : estimateMinPayment(d.type || "other", d.balance, d.apr),
@@ -14002,9 +14314,127 @@ function DebtPayoff({ getBudgetData }) {
                 >
                   ✦ Optimize automatically
                 </button>
+
+                {/* Manual-mode toggle (off by default) */}
+                <label className="track-toggle" style={{ marginTop: 10 }}>
+                  <input type="checkbox" checked={manualMode}
+                    onChange={(e) => setManualMode(e.target.checked)} />
+                  <span className="track-toggle-pill"><span className="track-toggle-knob" /></span>
+                  <span className="track-toggle-label">
+                    {manualMode ? "🔒 Manual mode — I'll manage my debt myself" : "Manual mode (optimizer disabled)"}
+                  </span>
+                </label>
+
+                {/* Rationale — always shown when not in manual mode */}
+                {!manualMode && optimization && (
+                  <div className="debt-rationale">
+                    <div className="debt-rationale-head">
+                      <span className={"debt-rationale-priority debt-rationale-priority-" + optimization.priority.toLowerCase()}>
+                        Priority: {optimization.priority}
+                      </span>
+                      <span className="debt-rationale-split">
+                        {Math.round(optimization.pct * 100)}% debt · {Math.round((1 - optimization.pct) * 100)}% save
+                      </span>
+                    </div>
+                    <div className="debt-rationale-reason">{optimization.reason}</div>
+                    {optimization.constraintHit && (
+                      <div className="debt-rationale-constraint">
+                        ⚙ rule applied: {
+                          optimization.constraintHit === "emergency" ? "Build emergency fund first" :
+                          optimization.constraintHit === "smallDebt"  ? "Clear small debts first (snowball)" :
+                          optimization.constraintHit === "maxDebtShare" ? `Keeping ${Math.round((1-constraints.maxDebtPctForcedSavings)*100)}% liquid (rule)` : ""
+                        }
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* What-if forecast */}
+                {!manualMode && whatIfScenarios.length > 0 && (
+                  <details className="debt-whatif">
+                    <summary>What if rates change?</summary>
+                    <div className="debt-whatif-body">
+                      {whatIfScenarios.map((s) => (
+                        <div key={s.key} className={"debt-whatif-row" + (s.changed ? " is-changed" : "")}>
+                          <span className="debt-whatif-label">{s.label}</span>
+                          <span className="debt-whatif-result">
+                            {Math.round(s.result.pct * 100)}/{Math.round((1 - s.result.pct) * 100)}
+                            <span className="debt-whatif-tag">
+                              {s.changed ? `→ ${s.result.priority.toLowerCase()}` : "no change"}
+                            </span>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                )}
+
+                {/* Rules expandable */}
+                <details className="debt-rules" open={showRules} onToggle={(e) => setShowRules(e.target.open)}>
+                  <summary>Optimizer rules</summary>
+                  <div className="debt-rules-body">
+                    <div className="debt-rule-row">
+                      <label className="debt-rule-label">
+                        Min emergency fund
+                        <span className="debt-rule-hint">Don't push extras to debt until liquid cash reaches this much.</span>
+                      </label>
+                      <Money value={constraints.minEmergencyFund}
+                        onChange={(v) => updConstraint("minEmergencyFund", Math.max(0, Number(v) || 0))}
+                        placeholder="1000" />
+                    </div>
+                    <div className="debt-rule-row">
+                      <label className="debt-rule-label">
+                        Clear small debts first
+                        <span className="debt-rule-hint">Snowball-style: blow through tiny balances for psychological wins.</span>
+                      </label>
+                      <label className="track-toggle">
+                        <input type="checkbox" checked={constraints.clearSmallDebtsFirst}
+                          onChange={(e) => updConstraint("clearSmallDebtsFirst", e.target.checked)} />
+                        <span className="track-toggle-pill"><span className="track-toggle-knob" /></span>
+                      </label>
+                    </div>
+                    {constraints.clearSmallDebtsFirst && (
+                      <div className="debt-rule-row">
+                        <label className="debt-rule-label">
+                          Small-debt threshold
+                          <span className="debt-rule-hint">Balances under this count as "small".</span>
+                        </label>
+                        <Money value={constraints.smallDebtThreshold}
+                          onChange={(v) => updConstraint("smallDebtThreshold", Math.max(0, Number(v) || 0))}
+                          placeholder="500" />
+                      </div>
+                    )}
+                    <div className="debt-rule-row">
+                      <label className="debt-rule-label">
+                        Max debt share
+                        <span className="debt-rule-hint">Never put more than this much of monthly cash to debt.</span>
+                      </label>
+                      <NumberInput
+                        value={(constraints.maxDebtPctForcedSavings * 100).toFixed(0)}
+                        onChange={(v) => updConstraint("maxDebtPctForcedSavings", Math.max(0.1, Math.min(1, (Number(v) || 95) / 100)))}
+                        suffix="%"
+                      />
+                    </div>
+                  </div>
+                </details>
+
+                {/* Sanity-check banner — only when overspent */}
+                {sanityCheck?.overspent && (
+                  <div className="debt-sanity-warn">
+                    ⚠ Your commitments exceed take-home by <strong>{fmtUSD0(sanityCheck.gap)}/mo</strong>.
+                    <div className="debt-sanity-detail">
+                      Bills {fmtUSD0(sanityCheck.bills)} + debt minimums {fmtUSD0(sanityCheck.debtMins)}
+                      {sanityCheck.extraToDebt > 0 && ` + extra debt ${fmtUSD0(sanityCheck.extraToDebt)}`}
+                      {sanityCheck.savings > 0 && ` + savings ${fmtUSD0(sanityCheck.savings)}`}
+                      {" = "}<strong>{fmtUSD0(sanityCheck.totalOut)}/mo</strong> vs take-home {fmtUSD0(sanityCheck.takeHome)}.
+                    </div>
+                  </div>
+                )}
+
                 <p className="debt-optimize-explain">
-                  Picks the smartest split based on your debt APR vs savings APY.
-                  Higher debt rates → more to debt. {budgetLeftover == null && "Without Budget data, uses the cash amount above."} You can still adjust below.
+                  {manualMode
+                    ? "Manual mode is on. The optimizer won't adjust your split. Your minimums are locked — only you can change them."
+                    : "Picks the smartest split based on your debt APR vs savings APY, modified by your rules above."}
                 </p>
               </div>
 
@@ -14345,7 +14775,10 @@ function DebtPayoff({ getBudgetData }) {
                       <Field label="APR" hint={typeInfo.label.toLowerCase() + " typical"}>
                         <NumberInput value={(d.apr * 100).toFixed(2)} onChange={(v) => updDebt(i, "apr", v / 100)} suffix="%" />
                       </Field>
-                      <Field label="Min / mo" hint={typeInfo.estimateMethod === "percent" ? "2% of balance" : `over ${typeInfo.termYears}y`}>
+                      <Field
+                        label={<>Min / mo {manualMode && <span title="Locked: manual mode is on" style={{ marginLeft: 4 }}>🔒</span>}</>}
+                        hint={typeInfo.estimateMethod === "percent" ? "2% of balance" : `over ${typeInfo.termYears}y`}
+                      >
                         <div style={{ display: "flex", gap: 6 }}>
                           <Money value={d.minPayment} onChange={(v) => updDebt(i, "minPayment", v)} />
                           <button
@@ -14646,10 +15079,15 @@ function OverviewCalculator({ profile, getBudgetData }) {
     // already net of tax, so subtracting it again would double-count.
     // Tax is shown in the breakdown table as a "Tax" group label only.
     const categories = [
+      // If user has enabled manual debt mode on the Debt tab, label the debt
+      // minimums line as "Manual debt commitment" so the Overview reflects
+      // the user's stated framing (fixed/locked).
+      ...[],
       { label: "Rent / housing",   value: rent,            color: "#5A8FA3", group: "Out" },
       { label: "Living expenses",  value: otherMonthly,    color: "#7B6E55", group: "Out" },
       { label: "Vehicle costs",    value: autoMonthly || (carInsBudget + gasBudget), color: "#C9A96E", group: "Out" },
-      { label: "Debt minimums",    value: debtMinimums,    color: "#9C7C4B", group: "Out",
+      { label: debt.manualMode ? "Manual debt commitment" : "Debt minimums",
+                                  value: debtMinimums,    color: "#9C7C4B", group: "Out",
         from: hasTrackedDebts ? "DEBT" : "BUDGET" },
       { label: "Extra debt paydown", value: extraToDebt,   color: "#8B5A3C", group: "Save", from: "DEBT" },
       { label: "Going to savings", value: savingsTarget,   color: "#4DA77A", group: "Save", from: "SAVINGS" },
