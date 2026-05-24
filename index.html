@@ -5156,19 +5156,7 @@ html[data-color-mode="light"] .date-input { color-scheme: light; }
 }
 
 </style>
-<script>
-  (function () {
-    try {
-      var mode = localStorage.getItem("ledger:colorMode");
-      if (mode !== "dark") {
-        document.documentElement.dataset.colorMode = "light";
-        var v = {"--bg":"#F5F2EC","--bg-2":"#EEEAE0","--surface":"#FFFFFF","--surface-2":"#FAF7EF","--border":"#E5E0D2","--border-2":"#D3CDBD","--ink":"#1A1F1C","--ink-2":"#3F423E","--ink-3":"#6B7068","--ink-4":"#A0A398","--accent":"#1B4D3E","--accent-2":"#2C6E58","--accent-dim":"#A8C5B7","--accent-bg":"#E5EDE8","--gold":"#A8895A","--gold-dim":"#D4C39A","--positive":"#2C6E58","--negative":"#B2452A","--ai-fab-fg":"#FFFFFF"};
-        var s = document.documentElement.style;
-        for (var k in v) s.setProperty(k, v[k]);
-      } else { document.documentElement.dataset.colorMode = "dark"; }
-    } catch (e) {}
-  })();
-</script>
+<script>(function () { try { var mode = localStorage.getItem("ledger:colorMode"); if (mode !== "dark") { document.documentElement.dataset.colorMode = "light"; var v = {"--bg":"#F5F2EC","--bg-2":"#EEEAE0","--surface":"#FFFFFF","--surface-2":"#FAF7EF","--border":"#E5E0D2","--border-2":"#D3CDBD","--ink":"#1A1F1C","--ink-2":"#3F423E","--ink-3":"#6B7068","--ink-4":"#A0A398","--accent":"#1B4D3E","--accent-2":"#2C6E58","--accent-dim":"#A8C5B7","--accent-bg":"#E5EDE8","--gold":"#A8895A","--gold-dim":"#D4C39A","--positive":"#2C6E58","--negative":"#B2452A","--ai-fab-fg":"#FFFFFF"}; var s = document.documentElement.style; for (var k in v) s.setProperty(k, v[k]); } else { document.documentElement.dataset.colorMode = "dark"; } } catch (e) {} })();</script>
 </head><body><div id="root"></div>
 <script type="importmap">{"imports":{"react":"https://esm.sh/react@18.3.1","react/":"https://esm.sh/react@18.3.1/","react-dom":"https://esm.sh/react-dom@18.3.1","react-dom/":"https://esm.sh/react-dom@18.3.1/","react-dom/client":"https://esm.sh/react-dom@18.3.1/client","framer-motion":"https://esm.sh/framer-motion@11.5.4?external=react,react-dom","recharts":"https://esm.sh/recharts@2.13.0?external=react,react-dom"}}</script>
 <script type="module">
@@ -13549,7 +13537,7 @@ function WelcomePhase({ next }) {
 }
 
 // ─── Phase 2: Account (sign in / sign up / guest) ─────────────────────
-function AccountPhase({ data, setData, next }) {
+function AccountPhase({ data, setData, next, finish }) {
   const [mode, setMode] = useStateOnb(data.account?.mode || "choice"); // choice | signin | signup | guest
   const [email, setEmail] = useStateOnb(data.account?.email || "");
   const [firstName, setFirstName] = useStateOnb(data.account?.firstName || "");
@@ -13604,6 +13592,16 @@ function AccountPhase({ data, setData, next }) {
         window.__rawStorage.set("ledger:auth:accounts", JSON.stringify(map));
         window.__rawStorage.set("ledger:auth:currentUser", cleanEmail);
         updAccount({ email: cleanEmail, firstName: account.firstName, lastName: account.lastName, mode: "signin" });
+        // If this account already has onboarding data saved, jump straight to the dashboard
+        // instead of walking them through the wizard again.
+        const alreadyOnboarded = !!window.__rawStorage?.get?.(`ledger:u:${cleanEmail}:onboarded`);
+        if (alreadyOnboarded) {
+          setBusy(false);
+          // Mark this session as onboarded so AuthGate exits the wizard
+          window.__rawStorage.set("ledger:onboarded", "1");
+          window.location.reload();
+          return;
+        }
       } else if (mode === "guest") {
         window.__rawStorage.set("ledger:auth:currentUser", "_guest");
         updAccount({ email: "_guest", firstName: "Guest", lastName: "", mode: "guest" });
@@ -13621,23 +13619,25 @@ function AccountPhase({ data, setData, next }) {
     return (
       <div className="onb-account-choice">
         <p className="expense-section-hint" style={{ textAlign: "center", marginTop: 0 }}>
-          Your data will be saved under your account so you can come back to it anytime.
+          Your data is saved under your account so you can come back to it anytime.
+          Use <strong>any email</strong> — Gmail, Outlook, work email, whatever you prefer.
         </p>
         <div className="onb-account-options">
-          <button className="onb-account-option" onClick={() => setMode(hasExisting ? "signin" : "signup")}>
-            <div className="onb-account-icon">✦</div>
-            <div className="onb-account-option-title">{hasExisting ? "Sign in" : "Create an account"}</div>
+          {/* Sign in is always shown — if user already has an account, they jump to it */}
+          <button className="onb-account-option" onClick={() => setMode("signin")}>
+            <div className="onb-account-icon">→</div>
+            <div className="onb-account-option-title">Sign in to existing account</div>
             <div className="onb-account-option-sub">
-              {hasExisting ? "You already have an account on this browser" : "Save your finances with email + password"}
+              {hasExisting
+                ? `You have ${Object.keys(existingAccounts).length} account${Object.keys(existingAccounts).length !== 1 ? "s" : ""} on this browser`
+                : "Already signed up here before? Welcome back"}
             </div>
           </button>
-          {hasExisting && (
-            <button className="onb-account-option" onClick={() => setMode("signup")}>
-              <div className="onb-account-icon">+</div>
-              <div className="onb-account-option-title">Create a new account</div>
-              <div className="onb-account-option-sub">For a different person on this browser</div>
-            </button>
-          )}
+          <button className="onb-account-option" onClick={() => setMode("signup")}>
+            <div className="onb-account-icon">✦</div>
+            <div className="onb-account-option-title">Create a new account</div>
+            <div className="onb-account-option-sub">Save your finances with email — password optional</div>
+          </button>
           <button className="onb-account-option onb-account-option-subtle" onClick={() => setMode("guest")}>
             <div className="onb-account-icon">👤</div>
             <div className="onb-account-option-title">Continue as guest</div>
