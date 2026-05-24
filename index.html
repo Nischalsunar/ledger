@@ -5169,7 +5169,11 @@ function LoginScreen({ onLoggedIn }) {
       } else {
         const account = map[cleanEmail];
         if (!account) { setError("No account with that email on this browser. Sign up instead."); setBusy(false); return; }
-        if (account.passHash !== hash) { setError("Wrong password."); setBusy(false); return; }
+        // Password is OPTIONAL — if the user typed one AND the stored account has a hash,
+        // we still validate. Empty password = email-only sign in (the default).
+        if (password && account.passHash && account.passHash !== hash) {
+          setError("Wrong password. (Or leave it blank — email alone is enough on this browser.)"); setBusy(false); return;
+        }
         // Update last sign-in timestamp so we can show "last seen X" later
         account.lastSignIn = new Date().toISOString();
         map[cleanEmail] = account;
@@ -5252,9 +5256,11 @@ function LoginScreen({ onLoggedIn }) {
               onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" required />
           </label>
           <label className="login-field">
-            <span>Password {mode === "signup" && <em>(any text — stored locally only)</em>}</span>
+            <span>
+              Password <em>{mode === "signup" ? "(optional — local only)" : "(optional — leave blank to sign in with email only)"}</em>
+            </span>
             <input type="password" className="text-input" value={password}
-              onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" required />
+              onChange={(e) => setPassword(e.target.value)} placeholder="optional" />
           </label>
 
           {error && <div className="login-error">{error}</div>}
@@ -13209,7 +13215,10 @@ function AccountPhase({ data, setData, next }) {
       } else if (mode === "signin") {
         const account = map[cleanEmail];
         if (!account) { setError("No account with that email on this browser."); setBusy(false); return; }
-        if (account.passHash !== hash) { setError("Wrong password."); setBusy(false); return; }
+        // Password is OPTIONAL — only validated if the user provides one AND account has one.
+        if (password && account.passHash && account.passHash !== hash) {
+          setError("Wrong password. (Or leave it blank — email is enough on this browser.)"); setBusy(false); return;
+        }
         account.lastSignIn = new Date().toISOString();
         map[cleanEmail] = account;
         window.__rawStorage.set("ledger:auth:accounts", JSON.stringify(map));
@@ -13302,9 +13311,12 @@ function AccountPhase({ data, setData, next }) {
         <input type="email" className="text-input" value={email}
           onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
       </Field>
-      <Field label="Password">
+      <Field
+        label="Password"
+        hint={mode === "signin" ? "optional — leave blank to sign in with just email" : "optional — local only"}
+      >
         <input type="password" className="text-input" value={password}
-          onChange={(e) => setPassword(e.target.value)} placeholder="••••••••"
+          onChange={(e) => setPassword(e.target.value)} placeholder="optional"
           onKeyDown={(e) => e.key === "Enter" && submit()} />
       </Field>
       {error && <div className="login-error">{error}</div>}
