@@ -13764,7 +13764,18 @@ function DebtPayoff({ getBudgetData }) {
         typeof saved.savingsAPY === "number" && setSavingsAPY(saved.savingsAPY);
         typeof saved.paymentFreq === "number" && setPaymentFreq(saved.paymentFreq);
         saved.strategy && setStrategy(saved.strategy);
-        if (typeof saved.customDebtAmount === "number") setCustomDebtAmount(saved.customDebtAmount);
+        if (typeof saved.customDebtAmount === "number") {
+          // ── Migration ──
+          // Old semantic: customDebtAmount = extra above minimums (smaller number).
+          // New semantic: customDebtAmount = total going to debt (incl. minimums).
+          // A boolean flag `customDebtIsTotal` marks already-migrated saves.
+          if (saved.customDebtIsTotal) {
+            setCustomDebtAmount(saved.customDebtAmount);
+          } else {
+            const m = (saved.debts || []).reduce((a, d) => a + (Number(d.minPayment) || 0), 0);
+            setCustomDebtAmount(saved.customDebtAmount + m);
+          }
+        }
       }
     } catch {}
   }, []);
@@ -13774,14 +13785,28 @@ function DebtPayoff({ getBudgetData }) {
     localStorage.setItem("ledger:debt", JSON.stringify({
       debts, spareCash, autoSpare, debtPct, savingsAPY, paymentFreq, strategy,
       customDebtAmount,
+      customDebtIsTotal: true, // mark new-semantic save so migration runs once
     }));
   }, [debts, spareCash, autoSpare, debtPct, savingsAPY, paymentFreq, strategy, customDebtAmount]);
 
+  // Compute total of monthly minimums up-front — used both to derive "extra"
+  // from a user-entered TOTAL and to display the consistent breakdown.
+  const minTotal = useMemoDebt(
+    () => debts.reduce((a, d) => a + (Number(d.minPayment) || 0), 0),
+    [debts]
+  );
+
   // Derive extra-toward-debt and to-savings from EITHER the % slider OR a custom $ amount.
-  // When customDebtAmount is a number, it wins (and the slider is shown as just a visual).
+  // The custom field now represents the TOTAL going to debt each month (minimums + extra)
+  // so it matches the "Minimums + extra" total shown in the sidebar. We subtract
+  // minimums internally to get the extra portion that actually rolls to the strategy target.
   const useCustom = customDebtAmount != null && customDebtAmount >= 0;
+  const customTotalTowardDebt = useCustom
+    ? Math.max(0, Math.round(customDebtAmount))
+    : null;
+  // "extra" is what's available ABOVE the minimums. Floored at 0 if user typed less than minimums.
   const extra     = useCustom
-    ? Math.min(Math.round(customDebtAmount), Math.round(spareCash))
+    ? Math.max(0, Math.min(customTotalTowardDebt - minTotal, Math.round(spareCash)))
     : Math.round(spareCash * debtPct);
   const toSavings = Math.max(0, Math.round(spareCash) - extra);
   const effectivePct = spareCash > 0 ? extra / spareCash : 0;
@@ -13908,14 +13933,42 @@ function DebtPayoff({ getBudgetData }) {
               <details className="debt-manual-details">
                 <summary>Manual override</summary>
                 <div className="stack" style={{ gap: 12, paddingTop: 12 }}>
-                  <Field label="Exact amount toward debt" hint="leave blank to use the slider">
+                  <Field
+                    label="Total going to debt each month"
+                    hint={minTotal > 0
+                      ? `includes ${fmtUSD0(minTotal)}/mo minimums + extra rolled to target debt`
+                      : "leave blank to use the slider below"}
+                  >
                     <Money
                       value={useCustom ? customDebtAmount : 0}
                       onChange={(v) => setCustomDebtAmount(v > 0 ? v : null)}
-                      placeholder={`e.g. ${Math.round(spareCash * 0.5)}`}
+                      placeholder={`e.g. ${Math.round(minTotal + spareCash * 0.5)}`}
                     />
+                    {useCustom && (
+                      <div className="split-share-line" style={{ marginTop: 6 }}>
+                        {customTotalTowardDebt >= minTotal ? (
+                          <>
+                            <strong>{fmtUSD0(minTotal)}/mo minimums</strong>
+                            <span className="split-share-sep">+</span>
+                            <strong>{fmtUSD0(extra)}/mo extra</strong>
+                            <span className="split-share-sep">=</span>
+                            <strong>{fmtUSD0(minTotal + extra)}/mo total</strong>
+                            {toSavings > 0 && (
+                              <>
+                                <span className="split-share-sep">·</span>
+                                <span style={{ color: "var(--positive)" }}>{fmtUSD0(toSavings)}/mo to savings</span>
+                              </>
+                            )}
+                          </>
+                        ) : (
+                          <span style={{ color: "var(--negative)" }}>
+                            Below minimums — at least <strong>{fmtUSD0(minTotal)}/mo</strong> must go to debt to avoid default.
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </Field>
-                  <Field label={`Or split: ${fmtUSD0(extra)}/mo debt · ${fmtUSD0(toSavings)}/mo save`}>
+                  <Field label={`Or split: ${fmtUSD0(minTotal + extra)}/mo debt · ${fmtUSD0(toSavings)}/mo save`}>
                     <div className="split-slider-wrap">
                       <input
                         type="range" min={0} max={1} step={0.05}
