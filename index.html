@@ -8265,7 +8265,7 @@ function ResultsHero({ tax, monthlyExpenses, view }) {
         </div>
         <div className="hero-divider" />
         <div className="hero-block">
-          <div className="hero-eyebrow">Take-home pay</div>
+          <div className="hero-eyebrow">After tax</div>
           <div className="hero-num">
             {fmtUSD0(takeHome)}
             <span className="hero-num-sm">{isMonthly ? "/mo" : "/yr"}</span>
@@ -11982,38 +11982,52 @@ function DebtPayoff({ getBudgetData }) {
                   then applies it. Single button — user just clicks to optimize. */}
               <div className="debt-optimize-box">
                 <div className="debt-optimize-row">
-                  <div className="debt-optimize-eyebrow">From your Budget surplus</div>
+                  <div className="debt-optimize-eyebrow">
+                    {budgetLeftover != null && budgetLeftover > 0
+                      ? "From your Budget surplus"
+                      : (spareCash > 0 ? "Cash you'll commit" : "Pick an amount to commit")}
+                  </div>
                   <div className="debt-optimize-val">
-                    {budgetLeftover != null
+                    {budgetLeftover != null && budgetLeftover > 0
                       ? <>{fmtUSD0(budgetLeftover)}<span className="debt-optimize-val-sub">/mo</span></>
-                      : <span className="debt-optimize-empty">— set up Budget first —</span>}
+                      : (spareCash > 0
+                          ? <>{fmtUSD0(spareCash)}<span className="debt-optimize-val-sub">/mo</span></>
+                          : <Money value={spareCash} onChange={(v) => { setSpareCash(v); setAutoSpare(false); }} placeholder="500" />
+                        )}
                   </div>
                 </div>
                 <button
                   className="btn-primary debt-optimize-btn"
                   onClick={() => {
-                    const cash = (budgetLeftover != null && budgetLeftover > 0) ? budgetLeftover : 1000;
+                    // Use whichever cash source is available — budget surplus, current spareCash, or fallback to minimums total
+                    let cash = (budgetLeftover != null && budgetLeftover > 0)
+                      ? budgetLeftover
+                      : (spareCash > 0 ? spareCash : Math.max(500, totals.min));
                     setSpareCash(cash);
-                    setAutoSpare(true);
+                    setAutoSpare(budgetLeftover != null && budgetLeftover > 0);
                     // Smart split: heavy on whichever side has the better rate
                     const avgApr = debts.length > 0
                       ? debts.reduce((a, d) => a + (d.apr * d.balance), 0) / Math.max(1, debts.reduce((a, d) => a + d.balance, 0))
                       : 0;
                     let pct = 0.5;
-                    if (avgApr - savingsAPY > 0.05) pct = 0.9;      // debt much more expensive → 90% debt
+                    if (avgApr - savingsAPY > 0.05) pct = 0.9;
                     else if (avgApr - savingsAPY > 0.02) pct = 0.75;
                     else if (avgApr - savingsAPY > -0.01) pct = 0.5;
-                    else pct = 0.25;                                 // savings yields more → favor savings
+                    else pct = 0.25;
                     setDebtPct(pct);
                     setCustomDebtAmount(null);
+                    // Also auto-estimate each debt's min payment from its type
+                    setDebts((arr) => arr.map((d) => ({
+                      ...d,
+                      minPayment: d.minPayment > 0 ? d.minPayment : estimateMinPayment(d.type || "other", d.balance, d.apr),
+                    })));
                   }}
-                  disabled={budgetLeftover == null}
                 >
                   ✦ Optimize automatically
                 </button>
                 <p className="debt-optimize-explain">
                   Picks the smartest split based on your debt APR vs savings APY.
-                  Higher debt rates → more to debt. You can still adjust below.
+                  Higher debt rates → more to debt. {budgetLeftover == null && "Without Budget data, uses the cash amount above."} You can still adjust below.
                 </p>
               </div>
 
@@ -14055,6 +14069,12 @@ const CALCULATORS = [
 
 function App() {
   const [profile, setProfile] = useProfile();
+  // Tick so the sidebar can re-render when debt data is added/removed from any tab
+  const [, setNavTick] = useStateApp(0);
+  useEffectApp(() => {
+    const id = setInterval(() => setNavTick((t) => t + 1), 1500);
+    return () => clearInterval(id);
+  }, []);
   const [onboardOpen, setOnboardOpen] = useStateApp(() => {
     try {
       // Shareable links can force the welcome flow:
@@ -14165,7 +14185,18 @@ function App() {
 
         <div className="nav-section">Calculators</div>
         <nav className="nav">
-          {CALCULATORS.map((c) => (
+          {/* Hide tabs that don't apply yet — e.g. Debt only shows when user has at least one debt */}
+          {CALCULATORS
+            .filter((c) => {
+              if (c.id === "debt") {
+                try {
+                  const ds = JSON.parse(localStorage.getItem("ledger:debt") || "null");
+                  return (ds?.debts || []).length > 0;
+                } catch { return false; }
+              }
+              return true;
+            })
+            .map((c) => (
             <button
               key={c.id}
               className={"nav-item" + (active === c.id ? " is-active" : "")}
