@@ -14510,9 +14510,11 @@ function OverviewCalculator({ profile, getBudgetData }) {
     const hasTrackedDebts = (debt.debts || []).length > 0;
     const debtMinimums = hasTrackedDebts ? debtTotal : otherLoan;
 
-    // Build categories with explicit segments
+    // Build categories with explicit segments.
+    // IMPORTANT: Tax is NOT included as an outflow here — monthlyTakeHome is
+    // already net of tax, so subtracting it again would double-count.
+    // Tax is shown in the breakdown table as a "Tax" group label only.
     const categories = [
-      { label: "Tax",              value: monthlyTax,      color: "#D77662", group: "Out" },
       { label: "Rent / housing",   value: rent,            color: "#5A8FA3", group: "Out" },
       { label: "Living expenses",  value: otherMonthly,    color: "#7B6E55", group: "Out" },
       { label: "Vehicle costs",    value: autoMonthly || (carInsBudget + gasBudget), color: "#C9A96E", group: "Out" },
@@ -14522,17 +14524,19 @@ function OverviewCalculator({ profile, getBudgetData }) {
       { label: "Going to savings", value: savingsTarget,   color: "#4DA77A", group: "Save", from: "SAVINGS" },
     ].filter((c) => c.value > 0);
 
-    // True outflows = everything in the "Out" group (real bills, taxes, debt minimums).
+    // True outflows = everything in the "Out" group (real bills + debt minimums).
     // Savings + extra debt paydown are ALLOCATIONS of leftover, not outflows —
     // they're still your money, just earmarked. So leftover = take-home − Out only.
     const totalOut = categories.reduce((a, c) => a + c.value, 0);            // includes Save (for backward compat with the chart)
     const realOutflows = categories.filter((c) => c.group === "Out").reduce((a, c) => a + c.value, 0);
     const earmarked    = categories.filter((c) => c.group === "Save").reduce((a, c) => a + c.value, 0);
-    const leftover = monthlyTakeHome - realOutflows; // POSITIVE leftover includes savings
+    const leftover = monthlyTakeHome - realOutflows; // POSITIVE leftover includes savings (which is part of earmarked)
+    // Discretionary = leftover after earmarking savings + extra debt
+    const discretionary = leftover - earmarked;
 
     return {
       tax, monthlyTakeHome, monthlyTax,
-      categories, totalOut, realOutflows, earmarked, leftover,
+      categories, totalOut, realOutflows, earmarked, leftover, discretionary,
       autoMonthly, debtTotal, savingsTarget, extraToDebt,
       auto, debt, invest, household,
       expenses,
@@ -14567,9 +14571,10 @@ function OverviewCalculator({ profile, getBudgetData }) {
       </header>
 
       <div className="col-results" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        {/* Consistent across pages: leftover/after-expenses on LEFT, take-home on RIGHT */}
+        {/* Consistent across pages: leftover/after-expenses on LEFT, take-home on RIGHT,
+            with a "going to savings" block in the middle so the user sees all three at a glance. */}
         <section className="hero-card">
-          <div className="hero-grid">
+          <div className="hero-grid" style={{ gridTemplateColumns: data.earmarked > 0 ? "1fr auto 1fr auto 1fr" : "1fr auto 1fr" }}>
             <div className="hero-block">
               <div className="hero-eyebrow">{view === "monthly" ? "Monthly" : "Annual"} after expenses</div>
               <div className={"hero-num " + (data.leftover >= 0 ? "surplus" : "deficit")}>
@@ -14578,11 +14583,27 @@ function OverviewCalculator({ profile, getBudgetData }) {
               <div className="hero-sub">
                 {data.leftover >= 0
                   ? (data.earmarked > 0
-                      ? `includes ${fmtUSD0(data.earmarked * mult)} you've earmarked for savings & extra debt`
+                      ? `incl. savings · ${fmtUSD0(data.discretionary * mult)} discretionary`
                       : "untracked / discretionary")
                   : "shortfall — adjust elsewhere"}
               </div>
             </div>
+
+            {data.earmarked > 0 && (
+              <>
+                <div className="hero-divider" />
+                <div className="hero-block">
+                  <div className="hero-eyebrow">{view === "monthly" ? "Monthly" : "Annual"} going to savings</div>
+                  <div className="hero-num pos">{fmtUSD0(data.earmarked * mult)}</div>
+                  <div className="hero-sub">
+                    {data.savingsTarget > 0 && `${fmtUSD0(data.savingsTarget * mult)} savings`}
+                    {data.savingsTarget > 0 && data.extraToDebt > 0 && " · "}
+                    {data.extraToDebt > 0 && `${fmtUSD0(data.extraToDebt * mult)} extra debt`}
+                  </div>
+                </div>
+              </>
+            )}
+
             <div className="hero-divider" />
             <div className="hero-block">
               <div className="hero-eyebrow">{view === "monthly" ? "Monthly" : "Annual"} take-home</div>
