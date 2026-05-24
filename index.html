@@ -9734,7 +9734,7 @@ function computeMonthlyInvestmentProjection(years, portfolio, overrideMonthlySav
   return rows;
 }
 
-function PortfolioEditor({ portfolio, setPortfolio, rateMode = "annual" }) {
+function PortfolioEditor({ portfolio, setPortfolio, rateMode = "annual", totalMonthly = 0 }) {
   // Convert internal annual rate <-> displayed value depending on user's preferred entry mode
   const annualToDisplay = (annual) => rateMode === "monthly"
     ? ((Math.pow(1 + annual, 1/12) - 1) * 100).toFixed(2)
@@ -9743,6 +9743,8 @@ function PortfolioEditor({ portfolio, setPortfolio, rateMode = "annual" }) {
     ? Math.pow(1 + v / 100, 12) - 1
     : v / 100;
   const rateLabel = rateMode === "monthly" ? "Return / mo" : "Return / yr";
+  // Sum of all investment dollar amounts (helpful for the user to see vs total)
+  const investSum = totalMonthly * portfolio.investments.reduce((a, b) => a + b.pct, 0);
   const total = portfolioTotal(portfolio);
   const totalPct = total * 100;
   const totalOk = Math.abs(totalPct - 100) < 0.5;
@@ -9869,7 +9871,21 @@ function PortfolioEditor({ portfolio, setPortfolio, rateMode = "annual" }) {
           <span></span>
         </div>
 
-        <h3 className="sub-head" style={{ marginTop: 18 }}>Investments</h3>
+        <h3 className="sub-head" style={{ marginTop: 18, display: "flex", alignItems: "center", gap: 10 }}>
+          <span>Investments</span>
+          {totalMonthly > 0 && (
+            <span style={{
+              fontSize: 12,
+              fontWeight: 400,
+              color: investSum > totalMonthly * 1.001 ? "var(--negative)" : "var(--ink-3)",
+              fontFamily: "var(--display)",
+              fontStyle: "italic",
+            }}>
+              {fmtUSD0(investSum)} / {fmtUSD0(totalMonthly)} committed
+              {investSum > totalMonthly * 1.001 && " (over)"}
+            </span>
+          )}
+        </h3>
         {portfolio.investments.length === 0 && (
           <div className="port-empty">No investment types yet. Add one below ↓</div>
         )}
@@ -9905,7 +9921,10 @@ function PortfolioEditor({ portfolio, setPortfolio, rateMode = "annual" }) {
               </div>
               {!open && (
                 <button type="button" className="debt-card-summary" onClick={() => toggleInv(m.id)}>
-                  <span><strong>{(m.pct * 100).toFixed(1)}%</strong> allocation</span>
+                  <span>
+                    <strong>{(m.pct * 100).toFixed(1)}%</strong>
+                    {totalMonthly > 0 && <span style={{ color: "var(--accent-2)" }}> · {fmtUSD0(m.pct * totalMonthly)}/mo</span>}
+                  </span>
                   <span className="debt-card-summary-sep">·</span>
                   <span>{periodPct}% {periodInfo.label.toLowerCase()}</span>
                   <span className="debt-card-summary-sep">·</span>
@@ -9916,8 +9935,24 @@ function PortfolioEditor({ portfolio, setPortfolio, rateMode = "annual" }) {
               )}
               {open && (
                 <div className="inv-card-grid">
-                  <Field label="Allocation" hint="% of savings">
-                    <NumberInput value={(m.pct * 100).toFixed(1)} onChange={(v) => updateInvestment(m.id, { pct: v / 100 })} suffix="%" />
+                  <Field
+                    label="Allocation"
+                    hint={totalMonthly > 0 ? `${fmtUSD0(m.pct * totalMonthly)}/mo` : "% of savings"}
+                  >
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <NumberInput
+                        value={(m.pct * 100).toFixed(1)}
+                        onChange={(v) => updateInvestment(m.id, { pct: v / 100 })}
+                        suffix="%"
+                      />
+                      {totalMonthly > 0 && (
+                        <Money
+                          value={Math.round(m.pct * totalMonthly)}
+                          onChange={(v) => updateInvestment(m.id, { pct: totalMonthly > 0 ? (v / totalMonthly) : 0 })}
+                          placeholder="0"
+                        />
+                      )}
+                    </div>
                   </Field>
                   <Field label="Time horizon" hint="how long you'll hold">
                     <Segment
@@ -10160,7 +10195,12 @@ function InvestingCalculator({ profile, getBudgetData }) {
 
       <div className="layout">
         <aside className="col-inputs">
-          <PortfolioEditor portfolio={portfolio} setPortfolio={setPortfolio} rateMode={rateMode} />
+          <PortfolioEditor
+            portfolio={portfolio}
+            setPortfolio={setPortfolio}
+            rateMode={rateMode}
+            totalMonthly={fundingMode === "custom" ? customMonthly : (budget?.totals?.monthlyLeftover || 0)}
+          />
 
           <section className="card">
             <header className="card-head">
