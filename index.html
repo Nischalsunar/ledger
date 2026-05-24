@@ -6672,6 +6672,24 @@ window.fmtUSD0 = fmtUSD0;
 window.fmtUSD2 = fmtUSD2;
 window.fmtPct = fmtPct;
 
+// ── Integer-cents money helpers (Section B) ────────────────────────────
+// Use these inside long iterative loops (compound projection, debt sim) to
+// avoid float drift. `toCents` is round-half-away-from-zero so $0.005 → 1¢.
+// `toDollars` returns dollars as a float for the UI (display rounds via fmtUSD0).
+function toCents(dollars) {
+  if (!isFinite(dollars)) return 0;
+  // Symmetric rounding: 0.005 → 1, -0.005 → -1
+  return dollars < 0
+    ? -Math.round(-dollars * 100)
+    :  Math.round( dollars * 100);
+}
+function toDollars(cents) {
+  if (!isFinite(cents)) return 0;
+  return cents / 100;
+}
+window.toCents = toCents;
+window.toDollars = toDollars;
+
 const Field = ({ label, hint, children }) => (
   <label className="field">
     <div className="field-label">
@@ -12177,24 +12195,37 @@ function CompoundCalculator() {
   const equivAnnualPct  = rateMode === "monthly" ? (Math.pow(1 + (monthlyRate || 0) / 100, 12) - 1) * 100 : annualRate;
   const equivMonthlyPct = rateMode === "annual"  ? effMonthlyRate * 100 : monthlyRate;
 
-  // Month-by-month projection. Returns one row per month with running totals.
+  // Month-by-month projection. Loop body runs in INTEGER CENTS to eliminate
+  // float drift over hundreds of iterations. Only converts back to dollars
+  // when assembling row objects for the UI.
   const monthRows = useMemoInvest(() => {
     const totalMonths = Math.max(1, Math.round((years || 0) * 12));
     const rows = [];
-    let bal = Number(starting) || 0;
-    let contributed = Number(starting) || 0;
+    let balCents = toCents(Number(starting) || 0);
+    let contributedCents = toCents(Number(starting) || 0);
+    const monthlyCents = toCents(Number(monthly) || 0);
+    const r = effMonthlyRate; // float — multiplied into integer balance
     for (let m = 1; m <= totalMonths; m++) {
       if (contribTiming === "start") {
-        bal += Number(monthly) || 0;
-        contributed += Number(monthly) || 0;
-        bal = safeBal(bal * (1 + effMonthlyRate));
+        balCents += monthlyCents;
+        contributedCents += monthlyCents;
+        // Multiply by (1+r) then re-snap to integer cents (Math.round)
+        balCents = Math.round(balCents * (1 + r));
       } else {
-        bal = safeBal(bal * (1 + effMonthlyRate));
-        bal += Number(monthly) || 0;
-        contributed += Number(monthly) || 0;
+        balCents = Math.round(balCents * (1 + r));
+        balCents += monthlyCents;
+        contributedCents += monthlyCents;
       }
+      // Clamp to prevent overflow on absurd inputs
+      const balDollars = toDollars(balCents);
+      const safeDollars = safeBal(balDollars);
+      const contribDollars = toDollars(contributedCents);
       rows.push({
-        m, year: Math.ceil(m / 12), balance: bal, contributed, interest: bal - contributed,
+        m,
+        year: Math.ceil(m / 12),
+        balance: safeDollars,
+        contributed: contribDollars,
+        interest: safeDollars - contribDollars,
       });
     }
     return rows;
@@ -17100,6 +17131,29 @@ window.MonteCarloCard = MonteCarloCard;
   function assert(cond, msg) {
     if (!cond) throw new Error(msg || "assertion failed");
   }
+
+  // ── toCents / toDollars round-trip (Section B helpers) ───────────────
+  t("toCents: $0 → 0¢", () => {
+    assert(window.toCents(0) === 0, "expected 0");
+  });
+  t("toCents: $1.23 → 123¢", () => {
+    assert(window.toCents(1.23) === 123, "expected 123, got " + window.toCents(1.23));
+  });
+  t("toCents: rounds half-away-from-zero", () => {
+    assert(window.toCents(0.005) === 1, "expected 1, got " + window.toCents(0.005));
+    assert(window.toCents(-0.005) === -1, "expected -1, got " + window.toCents(-0.005));
+  });
+  t("toCents/toDollars: round-trip for normal range", () => {
+    for (const v of [0, 1, 1.99, 100.5, 1234567.89]) {
+      const c = window.toCents(v);
+      const back = window.toDollars(c);
+      assert(eq(back, v, 0.005), `round-trip lost: ${v} → ${c}¢ → ${back}`);
+    }
+  });
+  t("toCents: handles NaN gracefully", () => {
+    assert(window.toCents(NaN) === 0, "expected 0 for NaN");
+    assert(window.toDollars(NaN) === 0, "expected 0 for NaN");
+  });
 
   // ── fmtUSD0 (currency format with NaN/Infinity guard) ─────────────────
   t("fmtUSD0: formats integer", () => {
