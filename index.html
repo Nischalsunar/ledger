@@ -12511,6 +12511,36 @@ function saveOnboardingData(data) {
     localStorage.setItem("ledger:debt", JSON.stringify(debtState));
   }
 
+  // Cash reserves → seed the investing portfolio's emergency/reserve allocations + a savings goal note
+  if (data.reserves && (data.reserves.emergencyGoal > 0 || data.reserves.reserveGoal > 0 || data.reserves.emergencyMonthly > 0)) {
+    try {
+      const inv = JSON.parse(localStorage.getItem("ledger:invest-v2") || "null") || {};
+      const portfolio = inv.portfolio || {
+        emergency: 0, reserve: 0,
+        investments: [{ id: 1, name: "Stocks", pct: 0.30, returnRate: 0.10, horizon: "long", returnPeriod: "yearly", returnInput: 0.10, platform: "Fidelity" }],
+      };
+      // Allocate some of monthly savings toward emergency/reserve until the goal is hit
+      // (rough heuristic: bias 30% emergency / 10% reserve / 60% investments if goal is set)
+      if (data.reserves.emergencyGoal > 0) portfolio.emergency = 0.30;
+      if (data.reserves.reserveGoal > 0)   portfolio.reserve   = 0.10;
+      // Re-normalize investments to fill remaining %
+      const cashShare = (portfolio.emergency || 0) + (portfolio.reserve || 0);
+      const remaining = Math.max(0, 1 - cashShare);
+      const invSum = portfolio.investments.reduce((a, b) => a + b.pct, 0) || 1;
+      portfolio.investments = portfolio.investments.map((x) => ({ ...x, pct: (x.pct / invSum) * remaining }));
+      inv.portfolio = portfolio;
+      inv.savingsAPY = data.reserves.savingsApy ?? inv.savingsAPY ?? 0.04;
+      // Save extra metadata for the user's reference (not yet used by the Investing tab)
+      inv.reservesGoal = {
+        emergencyGoal:    data.reserves.emergencyGoal,
+        emergencyHave:    data.reserves.emergencyHave,
+        emergencyMonthly: data.reserves.emergencyMonthly,
+        reserveGoal:      data.reserves.reserveGoal,
+      };
+      localStorage.setItem("ledger:invest-v2", JSON.stringify(inv));
+    } catch {}
+  }
+
   localStorage.setItem(ONBOARD_KEY, "1");
 }
 
@@ -12894,7 +12924,93 @@ function ExpensesPhase({ data, setData }) {
   );
 }
 
-// ─── Phase 5: Debt ─────────────────────────────────────────────────────
+// ─── Phase 5: Cash reserves (Emergency fund + buffer) ─────────────────
+function CashReservesPhase({ data, setData }) {
+  const r = data.reserves;
+  const upd = (k, v) => setData((d) => ({ ...d, reserves: { ...d.reserves, [k]: v } }));
+
+  // Quick presets for emergency-fund size (3 / 6 / 12 months of expenses)
+  const monthlyExp = (data.expenses.rent || 0) + (data.expenses.groceries || 0)
+                   + (data.expenses.utilities || 0) + (data.expenses.misc || 0);
+  const presets = [
+    { label: "3 months",  months: 3,  amount: Math.round(monthlyExp * 3) },
+    { label: "6 months",  months: 6,  amount: Math.round(monthlyExp * 6) },
+    { label: "12 months", months: 12, amount: Math.round(monthlyExp * 12) },
+  ];
+
+  const monthlyContribution = r.emergencyMonthly || 0;
+  const monthsToGoal = monthlyContribution > 0 && r.emergencyGoal > 0
+    ? Math.ceil(Math.max(0, r.emergencyGoal - (r.emergencyHave || 0)) / monthlyContribution)
+    : null;
+
+  return (
+    <div className="onb-form">
+      <p className="expense-section-hint" style={{ marginTop: -4 }}>
+        Cash you keep aside for emergencies — separate from your investments.
+        Most advisors recommend <strong>3–6 months of expenses</strong> in a
+        high-yield savings account before serious investing.
+      </p>
+
+      <Field
+        label="Emergency fund goal"
+        hint={monthlyExp > 0 ? `your monthly expenses are about $${monthlyExp.toLocaleString()}` : "what you'd want saved up for emergencies"}
+      >
+        <Money value={r.emergencyGoal || 0} onChange={(v) => upd("emergencyGoal", v)} placeholder="10,000" />
+      </Field>
+
+      {monthlyExp > 0 && (
+        <div className="onb-chip-row" style={{ marginTop: -6 }}>
+          {presets.map((p) => (
+            <button
+              key={p.months}
+              type="button"
+              className={"onb-chip" + (r.emergencyGoal === p.amount ? " is-on" : "")}
+              onClick={() => upd("emergencyGoal", p.amount)}
+            >
+              {p.label} <span className="onb-chip-amt">${p.amount.toLocaleString()}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="row-2">
+        <Field label="Already saved" hint="how much you have now">
+          <Money value={r.emergencyHave || 0} onChange={(v) => upd("emergencyHave", v)} placeholder="0" />
+        </Field>
+        <Field label="Monthly contribution" hint="amount you add each month">
+          <Money value={r.emergencyMonthly || 0} onChange={(v) => upd("emergencyMonthly", v)} placeholder="200" />
+        </Field>
+      </div>
+
+      {monthsToGoal != null && monthsToGoal > 0 && (
+        <div className="onb-split-result">
+          <span>You'll hit your goal in</span>
+          <strong>{monthsToGoal} {monthsToGoal === 1 ? "month" : "months"}</strong>
+          <span className="onb-split-formula">
+            (${(r.emergencyGoal - (r.emergencyHave || 0)).toLocaleString()} ÷ ${(r.emergencyMonthly || 0).toLocaleString()}/mo)
+          </span>
+        </div>
+      )}
+
+      <Field
+        label="Short-term reserve"
+        hint="for upcoming purchases — car repairs, travel, etc. (optional)"
+      >
+        <Money value={r.reserveGoal || 0} onChange={(v) => upd("reserveGoal", v)} placeholder="2,000" />
+      </Field>
+
+      <Field label="Savings APY" hint="high-yield savings account interest rate">
+        <NumberInput
+          value={(r.savingsApy || 0) * 100}
+          onChange={(v) => upd("savingsApy", (v || 0) / 100)}
+          suffix="%"
+        />
+      </Field>
+    </div>
+  );
+}
+
+// ─── Phase 6: Debt ─────────────────────────────────────────────────────
 function DebtPhase({ data, setData }) {
   const [hasDebt, setHasDebt] = useStateOnb(data.debts.length > 0 ? "yes" : null);
   const types = typeof DEBT_TYPES !== "undefined" ? DEBT_TYPES : {};
@@ -13025,6 +13141,12 @@ function FinishPhase({ data, finish }) {
           <span>Monthly expenses</span>
           <strong>${(data.expenses.rent + data.expenses.groceries + data.expenses.utilities + data.expenses.misc).toLocaleString()}</strong>
         </div>
+        {data.reserves && data.reserves.emergencyGoal > 0 && (
+          <div className="onb-summary-row">
+            <span>Emergency fund goal</span>
+            <strong>${data.reserves.emergencyGoal.toLocaleString()}</strong>
+          </div>
+        )}
         {data.debts.length > 0 && (
           <div className="onb-summary-row">
             <span>Debts</span>
@@ -13046,16 +13168,18 @@ function OnboardingWizard({ onClose }) {
     income: { salary: 65000, bonus: 0, additionalIncome: 0, additionalIncomeLabel: "", filing: "single", state: "NY", city: "", ficaExempt: false },
     vehicle: { has: null, type: "sedan", financing: "loan", insurance: 130, milesPerDay: 0, mpg: 30, gasPrice: 3.5, workdaysPerMonth: 22, price: 28000 },
     expenses: { rent: 1500, groceries: 500, utilities: 200, misc: 0, subscriptions: [], secondary: [] },
+    reserves: { emergencyGoal: 0, emergencyHave: 0, emergencyMonthly: 0, reserveGoal: 0, savingsApy: 0.04 },
     debts: [],
   });
 
   const phases = [
-    { title: "Welcome",         render: (p) => <WelcomePhase  {...p} /> },
-    { title: "Your income",     render: (p) => <IncomePhase   {...p} /> },
-    { title: "Your vehicle",    render: (p) => <VehiclePhase  {...p} /> },
-    { title: "Monthly expenses",render: (p) => <ExpensesPhase {...p} /> },
-    { title: "Any debts?",      render: (p) => <DebtPhase     {...p} /> },
-    { title: "Ready",           render: (p) => <FinishPhase   {...p} /> },
+    { title: "Welcome",          render: (p) => <WelcomePhase       {...p} /> },
+    { title: "Your income",      render: (p) => <IncomePhase        {...p} /> },
+    { title: "Your vehicle",     render: (p) => <VehiclePhase       {...p} /> },
+    { title: "Monthly expenses", render: (p) => <ExpensesPhase      {...p} /> },
+    { title: "Cash reserves",    render: (p) => <CashReservesPhase  {...p} /> },
+    { title: "Any debts?",       render: (p) => <DebtPhase          {...p} /> },
+    { title: "Ready",            render: (p) => <FinishPhase        {...p} /> },
   ];
   const total = phases.length;
   const isFirst = phase === 0;
