@@ -585,11 +585,12 @@ input, select { font: inherit; color: inherit; }
   color: var(--accent-2);
 }
 
-/* Push the page-head down a bit so it doesn't collide with the profile corner.
-   Also nudge actions in the head left so they don't overlap the avatar pill. */
-.page-head { padding-right: 220px; }
+/* Reserve space at the top-right of every page so the profile pill never overlaps
+   the page header's actions (Monthly/Annually segment, Download PDF, etc.). */
+.page-head { padding-top: 56px; }
+.page-head-right { padding-right: 0; }
 @media (max-width: 800px) {
-  .page-head { padding-right: 60px; }
+  .page-head { padding-top: 50px; }
   .profile-corner { top: 12px; right: 12px; }
   .profile-corner-name { display: none; }
   .profile-corner-caret { display: none; }
@@ -13554,28 +13555,11 @@ function App() {
           </button>
         </nav>
 
-        <div className="profile-mini">
-          <div className="profile-mini-row">
-            <span className="profile-mini-label">Salary</span>
-            <span className="profile-mini-val">${profile.salary.toLocaleString()}</span>
-          </div>
-          <div className="profile-mini-row">
-            <span className="profile-mini-label">Location</span>
-            <span className="profile-mini-val">
-              {profile.city || "—"}{profile.city ? ", " : ""}{profile.state}
-            </span>
-          </div>
-          <div className="profile-mini-row">
-            <span className="profile-mini-label">Filing</span>
-            <span className="profile-mini-val">{profile.filing === "married" ? "MFJ" : "Single"}</span>
-          </div>
-        </div>
-
         <div className="sidebar-data-bottom">
           <DataButton />
         </div>
-
-{/* Profile is now in the top-right corner (ProfileCorner). Sidebar stays minimal. */}
+{/* Profile pill lives in the top-right corner (ProfileCorner). The old SALARY/LOCATION/FILING
+    sidebar block was a duplicate of the same info — removed to clean up the sidebar. */}
 
         <div className="sidebar-foot">
           Personal finance toolkit. All math runs in your browser; nothing is sent anywhere.
