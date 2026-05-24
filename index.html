@@ -6918,15 +6918,18 @@ const SECONDARY_PRESETS = [
   { name: "Travel fund",    amount: 200 },
   { name: "Coffee / treats", amount: 60 },
 ];
+// Subscription presets — just names. User enters their own price after clicking.
 const SUBSCRIPTION_PRESETS = [
-  { name: "Netflix",    amount: 17 },
-  { name: "Spotify",    amount: 12 },
-  { name: "Gym",        amount: 40 },
-  { name: "iCloud / Drive", amount: 3 },
-  { name: "YouTube Premium", amount: 14 },
-  { name: "Amazon Prime", amount: 15 },
-  { name: "ChatGPT / AI", amount: 20 },
-  { name: "News / magazine", amount: 8 },
+  { name: "Netflix",         amount: 0 },
+  { name: "Spotify",         amount: 0 },
+  { name: "Gym",             amount: 0 },
+  { name: "iCloud / Drive",  amount: 0 },
+  { name: "YouTube Premium", amount: 0 },
+  { name: "Amazon Prime",    amount: 0 },
+  { name: "ChatGPT / AI",    amount: 0 },
+  { name: "News / magazine", amount: 0 },
+  { name: "Disney+",         amount: 0 },
+  { name: "Hulu",            amount: 0 },
 ];
 
 // Compute the full monthly total: primary fields + secondary list + subscriptions list.
@@ -11952,10 +11955,11 @@ function ExpensesPhase({ data, setData }) {
     return [...cur, { id, name: "New subscription", amount: 0 }];
   });
 
+  // Just names — amounts default to 0 so the user enters their own price below
   const presetSubs = [
-    { name: "Netflix", amount: 17 }, { name: "Spotify", amount: 12 }, { name: "Gym", amount: 40 },
-    { name: "iCloud / Drive", amount: 3 }, { name: "YouTube Premium", amount: 14 },
-    { name: "Amazon Prime", amount: 15 }, { name: "ChatGPT / AI", amount: 20 },
+    { name: "Netflix" }, { name: "Spotify" }, { name: "Gym" },
+    { name: "iCloud / Drive" }, { name: "YouTube Premium" },
+    { name: "Amazon Prime" }, { name: "ChatGPT / AI" }, { name: "Disney+" }, { name: "Hulu" },
   ];
   const subsTotal = subs.reduce((a, s) => a + (Number(s.amount) || 0), 0);
 
@@ -12059,7 +12063,7 @@ function ExpensesPhase({ data, setData }) {
 
       <Field
         label={`Subscriptions ${subsTotal > 0 ? `· $${subsTotal}/mo` : ""}`}
-        hint="click chips to add — edit prices below"
+        hint="click chips to add — then enter your price below"
       >
         <div className="onb-chip-row">
           {presetSubs.map((s) => {
@@ -12069,9 +12073,9 @@ function ExpensesPhase({ data, setData }) {
                 key={s.name}
                 type="button"
                 className={"onb-chip" + (on ? " is-on" : "")}
-                onClick={() => toggleSub(s.name, s.amount)}
+                onClick={() => toggleSub(s.name, 0)}
               >
-                {on && "✓ "}{s.name} <span className="onb-chip-amt">${s.amount}</span>
+                {on && "✓ "}{s.name}
               </button>
             );
           })}
