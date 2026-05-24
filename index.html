@@ -14747,7 +14747,7 @@ function OverviewCalculator({ profile, getBudgetData }) {
         {/* Net Worth integration: Cash accounts + investment projection − debt balance
             over the next 5 years. Built from existing debt simulation + investment
             projection, plus a new Accounts list owned by Overview. */}
-        <NetWorthCard data={data} />
+        <NetWorthCard data={data} profile={profile} />
 
         {/* ✦ Optimize — only shows when leftover < 0. Suggests specific cuts to flip the
             shortfall into a surplus, ranked by impact + ease (savings rate first, etc.) */}
@@ -15173,10 +15173,22 @@ function FullBreakdownBySource({ data, view, mult, profile }) {
 //   • Investments projected forward via window.projectSingleInvestment
 //   • Debt remaining balance per month via simulatePayoffWithSavings
 // Then computes net worth month-by-month for 60 months and plots it.
-function NetWorthCard({ data }) {
+function NetWorthCard({ data, profile }) {
   const [open, setOpen]         = useStateOv(true);
   const [accounts, setAccounts] = useStateOv([]);
   const [horizon, setHorizon]   = useStateOv(60); // months
+
+  // Parse the user's job-start date (YYYY-MM-DD from profile). If they haven't
+  // set one, fall back to today. This is the anchor for ALL X-axis labels.
+  const usingJobDate = !!profile?.jobStartDate;
+  const anchorDate = useMemoOv(() => {
+    const s = profile?.jobStartDate;
+    if (s) {
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+      if (m) return new Date(parseInt(m[1]), parseInt(m[2]) - 1, parseInt(m[3]));
+    }
+    return new Date();
+  }, [profile?.jobStartDate]);
 
   // Load + persist accounts list (Overview-owned, separate localStorage key)
   useEffectOv(() => {
@@ -15252,9 +15264,9 @@ function NetWorthCard({ data }) {
     return series;
   }, [accounts, horizon]);
 
-  // Today's anchor for absolute calendar labels. Recomputed once per mount
-  // (re-rendering doesn't shift the start date — only refreshing does).
-  const startDate = useMemoOv(() => new Date(), []);
+  // Anchor for absolute calendar labels: user's job-start date if provided,
+  // else today. Re-derived when profile.jobStartDate changes.
+  const startDate = anchorDate;
   const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   // Helper: month offset (0 = today) → Date object
   const offsetToDate = (m) => {
@@ -15313,6 +15325,11 @@ function NetWorthCard({ data }) {
           {change !== 0 && (
             <span style={{ marginLeft: 8, color: change >= 0 ? "var(--positive)" : "var(--negative)" }}>
               {change >= 0 ? "+" : ""}{fmtUSD0(change)}
+            </span>
+          )}
+          {usingJobDate && (
+            <span style={{ marginLeft: 8, fontSize: 10, color: "var(--ink-3)" }}>
+              anchored on job start
             </span>
           )}
         </span>
