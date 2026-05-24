@@ -4096,8 +4096,27 @@ html[data-color-mode="light"] .date-input { color-scheme: light; }
     white-space: nowrap;
   }
   .nav-glyph { display: none; }
+  /* Mobile: make Hide-sidebar fit in the same horizontal row as the calculator pills
+     instead of breaking out with its own border / margin. */
+  .nav-item-hide {
+    margin-top: 0;
+    padding: 8px 14px;
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    background: var(--accent-bg);
+    color: var(--accent-2);
+    flex-shrink: 0;
+    width: auto;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  .nav-item-hide:hover {
+    transform: none;
+    box-shadow: none;
+  }
   .profile-mini,
-  .sidebar-foot { display: none; }
+  .sidebar-foot,
+  .sidebar-data-bottom { display: none; }
 
   .main {
     padding: 18px 14px 60px;
@@ -12404,7 +12423,29 @@ const CALCULATORS = [
 function App() {
   const [profile, setProfile] = useProfile();
   const [onboardOpen, setOnboardOpen] = useStateApp(() => {
-    try { return !localStorage.getItem("ledger:onboarded"); } catch { return false; }
+    try {
+      // Shareable links can force the welcome flow:
+      //   /ledger/?welcome  → just shows the wizard (keeps existing data)
+      //   /ledger/?reset    → wipes ALL saved data + shows wizard (fresh demo)
+      const url = new URL(window.location.href);
+      if (url.searchParams.has("reset")) {
+        // Nuke every Ledger key — give the recipient a totally clean slate
+        Object.keys(localStorage)
+          .filter((k) => k.startsWith("ledger:"))
+          .forEach((k) => localStorage.removeItem(k));
+        // Strip the param so a refresh doesn't keep resetting
+        url.searchParams.delete("reset");
+        window.history.replaceState({}, "", url.toString());
+        return true;
+      }
+      if (url.searchParams.has("welcome")) {
+        localStorage.removeItem("ledger:onboarded");
+        url.searchParams.delete("welcome");
+        window.history.replaceState({}, "", url.toString());
+        return true;
+      }
+      return !localStorage.getItem("ledger:onboarded");
+    } catch { return false; }
   });
   const closeOnboard = (didFinish) => {
     setOnboardOpen(false);
