@@ -12300,8 +12300,8 @@ function AutoLoan({ getBudgetData }) {
     insurance: 130,
     gas: 200,
     autoGas: true,
-    maintenance: 80,
-    maintenanceItems: MAINTENANCE_PRESETS.sedan,
+    maintenance: 0,        // user must enter — no default guess
+    maintenanceItems: [],  // start empty — user adds their own items
     regAnnual: 200,
     parking: 0,
   });
@@ -12325,7 +12325,8 @@ function AutoLoan({ getBudgetData }) {
 
   const upd = (k, val) => setV((s) => ({ ...s, [k]: val }));
 
-  // When user picks a vehicle type, pull in smart defaults for MPG-relevant fields & maintenance.
+  // When user picks a vehicle type, pull in smart defaults for MPG-relevant fields.
+  // Maintenance items are NOT auto-filled — user enters their own numbers.
   const applyTypeDefaults = (typeId) => {
     const type = VEHICLE_TYPES.find((t) => t.id === typeId);
     if (!type) return;
@@ -12334,7 +12335,6 @@ function AutoLoan({ getBudgetData }) {
       type: typeId,
       insurance: s.introComplete ? s.insurance : type.defaults.insurance,
       price:     s.introComplete ? s.price     : type.defaults.basePrice,
-      maintenanceItems: MAINTENANCE_PRESETS[typeId] || s.maintenanceItems,
     }));
   };
 
@@ -12371,11 +12371,9 @@ function AutoLoan({ getBudgetData }) {
     const totalPaid = payment * v.termMonths;
     const totalInterest = Math.max(0, totalPaid - principal);
 
-    // Itemized maintenance → monthly
+    // Itemized maintenance → monthly. No fallback default — empty list = $0.
     const items = v.maintenanceItems || [];
-    const maintMonthly = items.length > 0
-      ? items.reduce((a, it) => a + (it.cost || 0) * (it.perYear || 0) / 12, 0)
-      : (v.maintenance || 0);
+    const maintMonthly = items.reduce((a, it) => a + (it.cost || 0) * (it.perYear || 0) / 12, 0);
     const maintAnnual = maintMonthly * 12;
 
     const monthlyOwnership = (v.insurance || 0) + (v.gas || 0) + maintMonthly
