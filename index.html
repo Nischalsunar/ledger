@@ -2114,9 +2114,59 @@ html[data-color-mode="light"] .ai-fab {
   min-height: 2px;
   border-radius: 3px 3px 0 0;
   transition: height 240ms cubic-bezier(.2,.7,.2,1);
+  position: relative;
 }
 .proj-bar.take { background: var(--accent); }
 .proj-bar.exp  { background: var(--gold-dim); }
+.proj-bar-label {
+  position: absolute;
+  top: -16px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: var(--display);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--ink);
+  white-space: nowrap;
+  font-feature-settings: "tnum";
+  pointer-events: none;
+}
+.proj-bar-label-exp { color: var(--gold); }
+@media (max-width: 800px) {
+  .proj-bar-label { font-size: 9px; top: -14px; }
+}
+
+/* Collapsible projection table — chevron toggle */
+.proj-table-wrap { margin-top: 8px; }
+.proj-table-toggle {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  font-family: var(--display);
+  font-size: 14px;
+  color: var(--ink-2);
+  border-radius: 8px;
+  border: 1px dashed var(--border-2);
+  margin-bottom: 12px;
+}
+.proj-table-toggle:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+  border-color: var(--accent);
+}
+.proj-table-toggle-meta {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--ink-3);
+  font-style: italic;
+}
 .proj-year {
   font-family: var(--display);
   font-size: 13px;
@@ -8297,15 +8347,28 @@ function Projection({ years, yearCount, isMonthly, monthRows, max, growth, onYea
       </div>
       <div className="card-body">
         <div className="proj-chart" style={{ gridTemplateColumns: `repeat(${years.length}, 1fr)`, gap: years.length > 8 ? 4 : 14 }}>
-          {years.map((y) => (
-            <div key={y.year} className="proj-col">
-              <div className="proj-bars">
-                <div className="proj-bar take" style={{ height: ((y.takeHome / max) * 100) + "%" }} title={`Take-home ${fmtUSD0(y.takeHome)}`} />
-                <div className="proj-bar exp"  style={{ height: ((y.expenses / max) * 100) + "%" }} title={`Expenses ${fmtUSD0(y.expenses)}`} />
+          {years.map((y) => {
+            // Compact label: $1.2k / $12.4k / $1.2M — wide bars use full $X,XXX, narrow ones get k/M
+            const compact = (n) => {
+              if (!n) return "";
+              if (n >= 1000000) return "$" + (n / 1000000).toFixed(1) + "M";
+              if (n >= 1000)    return "$" + Math.round(n / 100) / 10 + "k";
+              return "$" + Math.round(n);
+            };
+            return (
+              <div key={y.year} className="proj-col">
+                <div className="proj-bars">
+                  <div className="proj-bar take" style={{ height: ((y.takeHome / max) * 100) + "%" }} title={`Take-home ${fmtUSD0(y.takeHome)}`}>
+                    <span className="proj-bar-label proj-bar-label-take">{compact(y.takeHome)}</span>
+                  </div>
+                  <div className="proj-bar exp"  style={{ height: ((y.expenses / max) * 100) + "%" }} title={`Expenses ${fmtUSD0(y.expenses)}`}>
+                    <span className="proj-bar-label proj-bar-label-exp">{compact(y.expenses)}</span>
+                  </div>
+                </div>
+                <div className="proj-year">{years.length > 10 ? y.year.toString().slice(-2) : y.year}</div>
               </div>
-              <div className="proj-year">{years.length > 10 ? y.year.toString().slice(-2) : y.year}</div>
-            </div>
-          ))}
+            );
+          })}
         </div>
         <div className="proj-legend">
           <span><i className="dot take" /> Take-home</span>
@@ -8316,6 +8379,82 @@ function Projection({ years, yearCount, isMonthly, monthRows, max, growth, onYea
             </span>
           )}
         </div>
+        {/* Table itself is collapsible — chart stays visible, table folds when not needed */}
+        <ProjectionTable
+          isMonthly={isMonthly}
+          monthRows={monthRows}
+          years={years}
+        />
+        {false && <table className="ptable">
+          <thead>
+            <tr>
+              <th>{isMonthly ? "Month" : "Year"}</th>
+              <th className="num">Salary</th>
+              <th className="num">Tax</th>
+              <th className="num">Take-home</th>
+              <th className="num">Expenses</th>
+              <th className="num">Leftover</th>
+              <th className="num">Cumulative</th>
+            </tr>
+          </thead>
+          <tbody>
+            {isMonthly
+              ? monthRows.map((r) => (
+                  <tr key={r.key} className={r.isYearStart ? "ptable-year-start" : ""}>
+                    <td>{r.label}</td>
+                    <td className="num">{fmtUSD0(r.salary)}</td>
+                    <td className="num neg">{fmtUSD0(r.tax)}</td>
+                    <td className="num">{fmtUSD0(r.takeHome)}</td>
+                    <td className="num neg">{fmtUSD0(r.expenses)}</td>
+                    <td className={"num " + (r.leftover < 0 ? "neg" : "pos")}>
+                      {r.leftover >= 0 ? "+" : ""}{fmtUSD0(r.leftover)}
+                    </td>
+                    <td className={"num " + (r.cumulative < 0 ? "neg" : "pos")}>
+                      {r.cumulative >= 0 ? "+" : ""}{fmtUSD0(r.cumulative)}
+                    </td>
+                  </tr>
+                ))
+              : years.map((y) => (
+                  <tr key={y.year}>
+                    <td>{y.year}{y.partial && <span className="row-hint" style={{display:"inline",marginLeft:6,fontSize:11}}>({y.months}m)</span>}</td>
+                    <td className="num">{fmtUSD0(y.salary)}</td>
+                    <td className="num neg">{fmtUSD0(y.taxPaid)}</td>
+                    <td className="num">{fmtUSD0(y.takeHome)}</td>
+                    <td className="num neg">{fmtUSD0(y.expenses)}</td>
+                    <td className={"num " + (y.leftover < 0 ? "neg" : "pos")}>
+                      {y.leftover >= 0 ? "+" : ""}{fmtUSD0(y.leftover)}
+                    </td>
+                    <td className={"num " + (y.cumulative < 0 ? "neg" : "pos")}>
+                      {y.cumulative >= 0 ? "+" : ""}{fmtUSD0(y.cumulative)}
+                    </td>
+                  </tr>
+                ))
+            }
+          </tbody>
+        </table>}
+      </div>
+      </>}
+    </section>
+  );
+}
+
+// Collapsible projection table — chart stays visible, this table folds.
+function ProjectionTable({ isMonthly, monthRows, years }) {
+  const [open, setOpen] = useStateBudget(true);
+  return (
+    <div className={"proj-table-wrap" + (open ? "" : " is-collapsed")}>
+      <button
+        type="button"
+        className="proj-table-toggle"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className={"debt-card-chevron" + (open ? " is-open" : "")} aria-hidden="true">▾</span>
+        <span>{isMonthly ? "Month-by-month table" : "Year-by-year table"}</span>
+        <span className="proj-table-toggle-meta">
+          {isMonthly ? `${monthRows.length} rows` : `${years.length} rows`}
+        </span>
+      </button>
+      {open && (
         <table className="ptable">
           <thead>
             <tr>
@@ -8363,9 +8502,8 @@ function Projection({ years, yearCount, isMonthly, monthRows, max, growth, onYea
             }
           </tbody>
         </table>
-      </div>
-      </>}
-    </section>
+      )}
+    </div>
   );
 }
 
