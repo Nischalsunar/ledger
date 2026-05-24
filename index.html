@@ -5155,6 +5155,81 @@ html[data-color-mode="light"] .date-input { color-scheme: light; }
   text-align: right;
 }
 
+/* ===== Split control (rent / utilities ÷ N people) ===== */
+.split-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  flex: 0 0 auto;
+}
+.split-control-prefix {
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 14px;
+}
+.split-control-step {
+  width: 24px;
+  height: 28px;
+  background: transparent;
+  border: none;
+  color: var(--ink-2);
+  font-size: 16px;
+  font-weight: 500;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 120ms;
+}
+.split-control-step:hover:not(:disabled) {
+  background: var(--surface);
+  color: var(--accent-2);
+}
+.split-control-step:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.split-control-num {
+  width: 36px;
+  text-align: center;
+  background: transparent;
+  border: none;
+  color: var(--ink);
+  font-family: var(--display);
+  font-size: 16px;
+  font-feature-settings: "tnum";
+  -moz-appearance: textfield;
+}
+.split-control-num::-webkit-outer-spin-button,
+.split-control-num::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.split-control-suffix {
+  color: var(--ink-3);
+  font-size: 11px;
+  padding-right: 4px;
+  text-transform: lowercase;
+  font-style: italic;
+}
+.split-share-line {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--ink-2);
+  font-family: var(--display);
+  font-style: italic;
+}
+.split-share-line strong {
+  color: var(--accent-2);
+  font-style: normal;
+}
+.split-share-sep {
+  color: var(--ink-4);
+  margin: 0 8px;
+}
+
 /* ===== Investing contribution breakdown ===== */
 .invest-breakdown-grid {
   display: grid;
@@ -8019,7 +8094,12 @@ function buildContext({ profile, expenses, growth, commute, tax }) {
   }
   const totalMo = (window.sumExpenses ? window.sumExpenses(expenses) : Object.values(expenses).filter(v => typeof v === "number").reduce((a,b)=>a+b,0));
   lines.push(`• Monthly expenses ($${Math.round(totalMo).toLocaleString()}/mo total):`);
-  lines.push(`  - Rent $${expenses.rent}, Groceries/utilities $${expenses.expenses}, Insurance $${expenses.carIns}, Transportation $${expenses.gas}, Loans $${expenses.otherLoan}`);
+  const rentShare = window.expenseShare ? window.expenseShare(expenses, "rent") : (expenses.rent || 0);
+  const utilShare = window.expenseShare ? window.expenseShare(expenses, "utilities") : (expenses.utilities || 0);
+  const groceries = expenses.groceries != null ? expenses.groceries : (expenses.expenses || 0);
+  const rentNote = (Number(expenses.rentSplit) || 1) > 1 ? ` (your share, ${expenses.rentSplit}-way split of $${expenses.rent})` : "";
+  const utilNote = (Number(expenses.utilitiesSplit) || 1) > 1 ? ` (your share, ${expenses.utilitiesSplit}-way split of $${expenses.utilities})` : "";
+  lines.push(`  - Rent $${rentShare}${rentNote}, Groceries $${groceries}, Utilities $${utilShare}${utilNote}, Insurance $${expenses.carIns}, Transportation $${expenses.gas}, Loans $${expenses.otherLoan}`);
   const sec = expenses.secondary || [];
   const subs = expenses.subscriptions || [];
   if (sec.length)  lines.push(`  - Secondary (wants): ${sec.map(i => `${i.name} $${i.amount}`).join(", ")}`);
@@ -8548,9 +8628,12 @@ window.downloadData = downloadData;
 const { useState: useStateBudget, useMemo: useMemoBudget, useEffect: useEffectBudget } = React;
 
 // PRIMARY NEEDS — essentials you can't skip without consequences
+// `splitKey` means "this field is splittable" — the value is the FULL amount the
+// household pays, and we divide by expenses[splitKey] to get the user's share.
 const PRIMARY_FIELDS = [
-  { key: "rent",      label: "Rent / mortgage",  placeholder: "1,500" },
-  { key: "expenses",  label: "Groceries & utilities", placeholder: "600", hint: "food at home, water, power" },
+  { key: "rent",      label: "Rent / mortgage",  placeholder: "1,500", splitKey: "rentSplit", splitLabel: "roommates" },
+  { key: "groceries", label: "Groceries",        placeholder: "400",   hint: "food at home" },
+  { key: "utilities", label: "Utilities",        placeholder: "200",   hint: "power, water, internet, gas", splitKey: "utilitiesSplit", splitLabel: "splitting with" },
   { key: "carIns",    label: "Insurance",        placeholder: "150",   hint: "car, health, renters" },
   { key: "gas",       label: "Transportation",   placeholder: "200",   hint: "gas, transit, parking" },
   { key: "otherLoan", label: "Loan payments",    placeholder: "0",     hint: "student, credit, family" },
@@ -8583,12 +8666,29 @@ const SUBSCRIPTION_PRESETS = [
   { name: "Hulu",            amount: 0 },
 ];
 
+// Compute the user's *share* of a splittable field. Example: rent is the
+// total household rent, rentSplit is the number of roommates; share = rent / split.
+function expenseShare(expenses, key) {
+  const splitKey = key === "rent" ? "rentSplit"
+                  : key === "utilities" ? "utilitiesSplit"
+                  : null;
+  const split = splitKey ? Math.max(1, Number(expenses[splitKey]) || 1) : 1;
+  return (Number(expenses[key]) || 0) / split;
+}
+window.expenseShare = expenseShare;
+
 // Compute the full monthly total: primary fields + secondary list + subscriptions list.
 // Used everywhere the expenses object is summed (so back-compat with old data is preserved).
+// Back-compat: if data was saved before the groceries/utilities split, the combined
+// `expenses` field is treated as `groceries` so the total stays the same.
 function sumExpenses(expenses) {
   if (!expenses) return 0;
-  const primary = (Number(expenses.rent)      || 0)
-                + (Number(expenses.expenses)  || 0)
+  const groceries = expenses.groceries != null
+    ? (Number(expenses.groceries) || 0)
+    : (Number(expenses.expenses) || 0); // back-compat fallback
+  const primary = expenseShare(expenses, "rent")
+                + groceries
+                + expenseShare(expenses, "utilities")
                 + (Number(expenses.carIns)    || 0)
                 + (Number(expenses.gas)       || 0)
                 + (Number(expenses.otherLoan) || 0);
@@ -8832,7 +8932,13 @@ function BudgetExpenses({ expenses, setExpenses }) {
     }
   }, [expenses.gasAutoSync, autoGasFromCommute]);
 
-  const primarySubtotal = PRIMARY_FIELDS.reduce((a, f) => a + (Number(expenses[f.key]) || 0), 0);
+  // Use share for splittable fields so the "$X/mo" header reflects what the
+  // user actually pays, not the household total.
+  const primarySubtotal = PRIMARY_FIELDS.reduce((a, f) => {
+    if (f.splitKey) return a + expenseShare(expenses, f.key);
+    if (f.key === "groceries" && expenses.groceries == null) return a + (Number(expenses.expenses) || 0);
+    return a + (Number(expenses[f.key]) || 0);
+  }, 0);
 
   return (
     <>
@@ -8885,6 +8991,43 @@ function BudgetExpenses({ expenses, setExpenses }) {
                     </button>
                   )}
                 </div>
+              </Field>
+            );
+          }
+          // Splittable field (rent, utilities) — full amount + ÷ N people splitter
+          if (f.splitKey) {
+            const splitN = Math.max(1, Number(expenses[f.splitKey]) || 1);
+            const full = Number(expenses[f.key]) || 0;
+            const share = full / splitN;
+            const hint = splitN > 1
+              ? `${f.hint || ""}${f.hint ? " · " : ""}your share ${fmtUSD0(share)}/mo`
+              : f.hint;
+            return (
+              <Field key={f.key} label={f.label} hint={hint}>
+                <div style={{ display: "flex", gap: 6, alignItems: "stretch", flexWrap: "wrap" }}>
+                  <div style={{ flex: "1 1 160px", minWidth: 140 }}>
+                    <Money value={expenses[f.key]} onChange={(v) => upd(f.key, v)} placeholder={f.placeholder} />
+                  </div>
+                  <div className="split-control" title={`Divide ${f.label.toLowerCase()} by this many people`}>
+                    <span className="split-control-prefix">÷</span>
+                    <button type="button" className="split-control-step" onClick={() => upd(f.splitKey, Math.max(1, splitN - 1))} disabled={splitN <= 1}>−</button>
+                    <input
+                      type="number" min={1} max={20} step={1}
+                      className="split-control-num"
+                      value={splitN}
+                      onChange={(e) => upd(f.splitKey, Math.max(1, Math.min(20, parseInt(e.target.value) || 1)))}
+                    />
+                    <button type="button" className="split-control-step" onClick={() => upd(f.splitKey, Math.min(20, splitN + 1))}>+</button>
+                    <span className="split-control-suffix">{f.splitLabel}</span>
+                  </div>
+                </div>
+                {splitN > 1 && (
+                  <div className="split-share-line">
+                    Your share: <strong>{fmtUSD0(share)}/mo</strong>
+                    <span className="split-share-sep">·</span>
+                    full {fmtUSD0(full)} ÷ {splitN}
+                  </div>
+                )}
               </Field>
             );
           }
@@ -9062,11 +9205,12 @@ function ExpenseBreakdown({ takeHome, expenses, view }) {
 function buildProjectionYears(inputs, expenses, growth, yearCount) {
   const out = [];
   let salary = inputs.salary;
-  let rent = expenses.rent;
+  let rent = expenseShare(expenses, "rent");
   // Sum primary "other" fields PLUS secondary items PLUS subscription items
   const secondaryTotal = (expenses.secondary || []).reduce((a, it) => a + (Number(it.amount) || 0), 0);
   const subsTotal      = (expenses.subscriptions || []).reduce((a, it) => a + (Number(it.amount) || 0), 0);
-  let other = expenses.expenses + expenses.carIns + expenses.gas + expenses.otherLoan + secondaryTotal + subsTotal;
+  const groceries = expenses.groceries != null ? (Number(expenses.groceries) || 0) : (Number(expenses.expenses) || 0);
+  let other = groceries + expenseShare(expenses, "utilities") + (Number(expenses.carIns) || 0) + (Number(expenses.gas) || 0) + (Number(expenses.otherLoan) || 0) + secondaryTotal + subsTotal;
   let cumulative = 0;
 
   const today = new Date();
@@ -9580,7 +9724,12 @@ function ExpensesCalculator({ profile }) {
   const periodMult = view === "monthly" ? 1 : 12;
   const periodLabel = view === "monthly" ? "/mo" : "/yr";
 
-  const primarySubtotal = (Number(expenses.rent) || 0) + (Number(expenses.expenses) || 0)
+  const groceriesAmt = expenses.groceries != null
+    ? (Number(expenses.groceries) || 0)
+    : (Number(expenses.expenses) || 0);
+  const primarySubtotal = expenseShare(expenses, "rent")
+                       + groceriesAmt
+                       + expenseShare(expenses, "utilities")
                        + (Number(expenses.carIns) || 0) + (Number(expenses.gas) || 0)
                        + (Number(expenses.otherLoan) || 0);
   const secondarySubtotal = (expenses.secondary || []).reduce((a, it) => a + (Number(it.amount) || 0), 0);
@@ -13706,9 +13855,12 @@ function OverviewCalculator({ profile, getBudgetData }) {
     // Savings = whatever's left after the debt portion is taken from spareCash
     const savingsTarget = Math.max(0, (debt.spareCash || 0) - extraToDebt);
 
-    // Categorize budget expenses
-    const rent = expenses.rent || 0;
-    const otherMonthly = (expenses.expenses || 0);
+    // Categorize budget expenses (use share for splittable fields)
+    const share = window.expenseShare || ((e, k) => Number(e[k]) || 0);
+    const rent = share(expenses, "rent");
+    const groceriesVal = expenses.groceries != null ? (Number(expenses.groceries) || 0) : (Number(expenses.expenses) || 0);
+    const utilitiesVal = share(expenses, "utilities");
+    const otherMonthly = groceriesVal + utilitiesVal;
     const carInsBudget = expenses.carIns || 0;
     const gasBudget    = expenses.gas || 0;
     const otherLoan    = expenses.otherLoan || 0;
@@ -13900,15 +14052,22 @@ function OverviewCalculator({ profile, getBudgetData }) {
                 </tr>
                 <tr>
                   <td className="row-source">Budget</td>
-                  <td>Rent / housing</td>
-                  <td className="num neg">{fmtUSD0((data.expenses.rent || 0) * mult)}</td>
-                  <td className="num">{fmtPct((data.expenses.rent || 0) / data.monthlyTakeHome, 1)}</td>
+                  <td>Rent / housing{(Number(data.expenses.rentSplit) || 1) > 1 ? ` (${data.expenses.rentSplit}-way split)` : ""}</td>
+                  <td className="num neg">{fmtUSD0((window.expenseShare ? window.expenseShare(data.expenses, "rent") : (data.expenses.rent || 0)) * mult)}</td>
+                  <td className="num">{fmtPct((window.expenseShare ? window.expenseShare(data.expenses, "rent") : (data.expenses.rent || 0)) / data.monthlyTakeHome, 1)}</td>
                 </tr>
                 <tr>
                   <td className="row-source">Budget</td>
-                  <td>Living expenses</td>
-                  <td className="num neg">{fmtUSD0((data.expenses.expenses || 0) * mult)}</td>
-                  <td className="num">{fmtPct((data.expenses.expenses || 0) / data.monthlyTakeHome, 1)}</td>
+                  <td>Groceries + utilities{(Number(data.expenses.utilitiesSplit) || 1) > 1 ? ` (utilities ${data.expenses.utilitiesSplit}-way)` : ""}</td>
+                  {(() => {
+                    const g = data.expenses.groceries != null ? (Number(data.expenses.groceries) || 0) : (Number(data.expenses.expenses) || 0);
+                    const u = window.expenseShare ? window.expenseShare(data.expenses, "utilities") : (Number(data.expenses.utilities) || 0);
+                    const total = g + u;
+                    return (<>
+                      <td className="num neg">{fmtUSD0(total * mult)}</td>
+                      <td className="num">{fmtPct(total / data.monthlyTakeHome, 1)}</td>
+                    </>);
+                  })()}
                 </tr>
                 <tr>
                   <td className="row-source">Auto</td>
@@ -13988,7 +14147,7 @@ function OverviewCalculator({ profile, getBudgetData }) {
                 </div>
                 <div className="quick-stat">
                   <div className="quick-stat-label">Rent share of income</div>
-                  <div className="quick-stat-val">{fmtPct((data.expenses.rent || 0) / data.monthlyTakeHome, 1)}</div>
+                  <div className="quick-stat-val">{fmtPct((window.expenseShare ? window.expenseShare(data.expenses, "rent") : (data.expenses.rent || 0)) / data.monthlyTakeHome, 1)}</div>
                 </div>
                 <div className="quick-stat">
                   <div className="quick-stat-label">Debt-to-income ratio</div>
@@ -14009,7 +14168,7 @@ function OverviewCalculator({ profile, getBudgetData }) {
 
 function HealthCheck({ data }) {
   const checks = [];
-  const rentPct = (data.expenses.rent || 0) / data.monthlyTakeHome;
+  const rentPct = (window.expenseShare ? window.expenseShare(data.expenses, "rent") : (data.expenses.rent || 0)) / data.monthlyTakeHome;
   if (rentPct > 0) {
     if (rentPct < 0.30) checks.push({ kind: "ok",   label: "Rent under 30% of take-home",      detail: `${fmtPct(rentPct)} — healthy` });
     else if (rentPct < 0.40) checks.push({ kind: "warn", label: "Rent is 30–40% of take-home", detail: `${fmtPct(rentPct)} — on the high side` });
