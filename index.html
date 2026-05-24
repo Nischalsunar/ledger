@@ -256,6 +256,97 @@ input, select { font: inherit; color: inherit; }
   letter-spacing: 0.05em;
 }
 
+/* Overview ✦ Optimize panel — surplus encouragement + deficit-fixing suggestions */
+.optimize-panel {
+  border-radius: 14px;
+  padding: 18px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.optimize-panel-good {
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-dim);
+  flex-direction: row;
+  align-items: center;
+}
+.optimize-panel-bad {
+  background: linear-gradient(135deg, rgba(178, 69, 42, 0.10) 0%, var(--surface-2) 100%);
+  border: 1px solid rgba(178, 69, 42, 0.30);
+  border-left: 4px solid var(--negative);
+}
+.optimize-head {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+.optimize-icon {
+  font-size: 22px;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.optimize-panel-good .optimize-icon {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
+.optimize-body { flex: 1; min-width: 0; }
+.optimize-title {
+  font-family: var(--display);
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--ink);
+}
+.optimize-sub {
+  font-size: 13px;
+  color: var(--ink-2);
+  line-height: 1.5;
+  margin-top: 4px;
+}
+.optimize-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.optimize-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.optimize-item-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+  width: 28px;
+  text-align: center;
+  line-height: 1.3;
+}
+.optimize-item-body { flex: 1; min-width: 0; }
+.optimize-item-title {
+  font-weight: 500;
+  font-size: 14px;
+  color: var(--ink);
+  margin-bottom: 4px;
+}
+.optimize-item-detail {
+  font-size: 12px;
+  color: var(--ink-3);
+  line-height: 1.5;
+}
+
 /* ─── Login / account screen ─────────────────────────────────────── */
 .login-overlay {
   position: fixed;
@@ -12372,6 +12463,10 @@ function OverviewCalculator({ profile, getBudgetData }) {
           </div>
         </section>
 
+        {/* ✦ Optimize — only shows when leftover < 0. Suggests specific cuts to flip the
+            shortfall into a surplus, ranked by impact + ease (savings rate first, etc.) */}
+        <OptimizePanel data={data} view={view} mult={mult} />
+
         <section className="card">
           <header className="card-head">
             <h2>Where every dollar goes</h2>
@@ -12597,6 +12692,132 @@ function HealthCheck({ data }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+// ─── Optimize panel ────────────────────────────────────────────────────
+// Shows up only when monthly leftover < 0 (i.e. user is overspending allocations).
+// Lists 3-4 specific cut suggestions ranked by impact, each with a one-click apply.
+function OptimizePanel({ data, view, mult }) {
+  if (!data || data.leftover >= 0) {
+    // Already in surplus — give a quick "you could do more" prompt
+    return (
+      <section className="optimize-panel optimize-panel-good">
+        <div className="optimize-icon">✓</div>
+        <div className="optimize-body">
+          <div className="optimize-title">You're in the green — {fmtUSD0(data.leftover * mult)}{view === "monthly" ? "/mo" : "/yr"} discretionary</div>
+          <div className="optimize-sub">
+            That money isn't going anywhere tracked. Consider routing more of it to{" "}
+            <strong>investments</strong> or your{" "}
+            <strong>emergency fund</strong> instead of letting it drift.
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  const deficit = -data.leftover; // positive number = how much we need to free up
+
+  // Build the list of levers, with the biggest opportunities ranked first
+  const levers = [];
+
+  if (data.extraToDebt > 0) {
+    const cut = Math.min(data.extraToDebt, deficit);
+    levers.push({
+      key: "extraDebt",
+      icon: "⚖",
+      title: `Pause extra debt paydown — save ${fmtUSD0(cut)}/mo`,
+      detail: `You're paying ${fmtUSD0(data.extraToDebt)}/mo above minimums. Pausing the extra closes ${Math.round((cut/deficit)*100)}% of your gap. Minimums still get paid.`,
+      apply: () => {
+        const cur = readLS("ledger:debt") || {};
+        cur.debtPct = 0; cur.autoSpare = false;
+        localStorage.setItem("ledger:debt", JSON.stringify(cur));
+        window.location.reload();
+      },
+    });
+  }
+
+  if (data.savingsTarget > 0) {
+    const cut = Math.min(data.savingsTarget, deficit);
+    levers.push({
+      key: "savings",
+      icon: "💼",
+      title: `Trim savings rate — save ${fmtUSD0(cut)}/mo`,
+      detail: `You're routing ${fmtUSD0(data.savingsTarget)}/mo to savings. Trimming this could close ${Math.round((cut/deficit)*100)}% of the gap, but slows your investing.`,
+      apply: () => {
+        const cur = readLS("ledger:debt") || {};
+        cur.debtPct = 1; cur.autoSpare = false;
+        localStorage.setItem("ledger:debt", JSON.stringify(cur));
+        window.location.reload();
+      },
+    });
+  }
+
+  // Subscriptions — gather from expenses
+  const subs = (data.expenses?.subscriptions || []);
+  const subsTotal = subs.reduce((a, s) => a + (Number(s.amount) || 0), 0);
+  if (subsTotal > 0) {
+    levers.push({
+      key: "subs",
+      icon: "💳",
+      title: `Audit subscriptions — up to ${fmtUSD0(subsTotal)}/mo`,
+      detail: `You have ${subs.length} subscription${subs.length !== 1 ? "s" : ""} totaling ${fmtUSD0(subsTotal)}/mo: ${subs.slice(0, 4).map(s => s.name).join(", ")}${subs.length > 4 ? "…" : ""}. Cancel any you don't use.`,
+      apply: null, // user-driven on Expenses tab
+    });
+  }
+
+  // Vehicle — if monthly auto cost is high
+  if (data.autoMonthly > 400) {
+    levers.push({
+      key: "auto",
+      icon: "🚗",
+      title: `Vehicle costs are ${fmtUSD0(data.autoMonthly)}/mo`,
+      detail: `Insurance + gas + maintenance + loan together. Shopping insurance, refinancing the loan, or carpooling could trim 10-30%.`,
+      apply: null,
+    });
+  }
+
+  // Secondary spending
+  const secondary = (data.expenses?.secondary || []);
+  const secTotal = secondary.reduce((a, s) => a + (Number(s.amount) || 0), 0);
+  if (secTotal > 0) {
+    levers.push({
+      key: "sec",
+      icon: "✂",
+      title: `Secondary "wants" spend — ${fmtUSD0(secTotal)}/mo`,
+      detail: `Dining, clothes, entertainment, etc. Often the easiest to trim without hurting your life.`,
+      apply: null,
+    });
+  }
+
+  return (
+    <section className="optimize-panel optimize-panel-bad">
+      <div className="optimize-head">
+        <div className="optimize-icon">✦</div>
+        <div className="optimize-body">
+          <div className="optimize-title">
+            You're {fmtUSD0(deficit)}/mo short ({fmtUSD0(deficit * 12)}/yr)
+          </div>
+          <div className="optimize-sub">
+            Your allocations add up to more than your take-home. Here are the biggest levers to flip back into the green:
+          </div>
+        </div>
+      </div>
+      <ul className="optimize-list">
+        {levers.slice(0, 4).map((l) => (
+          <li key={l.key} className="optimize-item">
+            <span className="optimize-item-icon">{l.icon}</span>
+            <div className="optimize-item-body">
+              <div className="optimize-item-title">{l.title}</div>
+              <div className="optimize-item-detail">{l.detail}</div>
+            </div>
+            {l.apply && (
+              <button className="btn-link" onClick={l.apply}>Apply →</button>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
