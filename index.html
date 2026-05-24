@@ -9717,6 +9717,25 @@ function ExpensesCalculator({ profile }) {
     return () => clearInterval(id);
   }, []);
 
+  // Poll localStorage so changes from OTHER tabs (Household → shared expenses
+  // sync) flow into this tab's expense state while the user is here.
+  useEffectBudget(() => {
+    const id = setInterval(() => {
+      try {
+        const saved = JSON.parse(localStorage.getItem("ledger:budget") || "null");
+        const exp = saved?.expenses;
+        if (!exp) return;
+        setExpenses((cur) => {
+          const keys = ["rent", "rentSplit", "utilities", "utilitiesSplit", "groceries"];
+          const diff = keys.some((k) => Number(cur[k] || 0) !== Number(exp[k] || 0));
+          if (!diff) return cur;
+          return { ...cur, ...Object.fromEntries(keys.map((k) => [k, exp[k]])) };
+        });
+      } catch {}
+    }, 1200);
+    return () => clearInterval(id);
+  }, []);
+
   const monthlyTotal = useMemoBudget(
     () => (window.sumExpenses ? window.sumExpenses(expenses) : 0),
     [expenses]
@@ -9948,6 +9967,73 @@ function HouseholdCalculator({ profile, getBudgetData }) {
     budgetExpenses?.carIns, budgetExpenses?.gas, budgetExpenses?.otherLoan,
     JSON.stringify(budgetExpenses?.secondary || []),
     JSON.stringify(budgetExpenses?.subscriptions || []),
+  ]);
+
+  // ─── Sync Household → Budget Primary needs ─────────────────────────────
+  // Whenever the shared expenses or split mode changes, push the "Me" member's
+  // share back into the Budget tab so the Monthly Expenses → Primary needs
+  // section stays in sync. One-way: Household is treated as the authoritative
+  // source for shared housing expenses; Budget mirrors it.
+  useEffectHH(() => {
+    if (!household.members || household.members.length === 0) return;
+    const me = household.members[0];
+    if (!me?.syncFromProfile) return; // user opted Me out — don't overwrite their Budget
+
+    const N = Math.max(1, household.members.length);
+    const isEqual = household.splitMode === "equal";
+    const meShare = computeMemberSplit(household, me.id); // 0..1
+    const sh = household.shared || {};
+
+    // Treat utilities + internet + other as a single Utilities bucket
+    const utilitiesTotal = (Number(sh.utilities) || 0) + (Number(sh.internet) || 0) + (Number(sh.other) || 0);
+
+    let nextRent, nextRentSplit, nextUtil, nextUtilSplit, nextGroc;
+    if (isEqual) {
+      // Equal split: store the FULL amount + N-people split so the Budget
+      // UI shows the same "Your share" math the Household tab shows.
+      nextRent      = Number(sh.rent) || 0;
+      nextRentSplit = N;
+      nextUtil      = utilitiesTotal;
+      nextUtilSplit = N;
+      nextGroc      = (Number(sh.groceries) || 0) / N; // groceries has no split field in Budget
+    } else {
+      // Income or custom split: divide-by-N doesn't represent the share
+      // (it's an income-weighted or custom %). Store the user's exact share
+      // directly with split=1 so Budget shows the right amount.
+      nextRent      = (Number(sh.rent) || 0) * meShare;
+      nextRentSplit = 1;
+      nextUtil      = utilitiesTotal * meShare;
+      nextUtilSplit = 1;
+      nextGroc      = (Number(sh.groceries) || 0) * meShare;
+    }
+
+    try {
+      const budget = JSON.parse(localStorage.getItem("ledger:budget") || "{}");
+      const exp = { ...(budget.expenses || {}) };
+      const changed =
+        exp.rent           !== nextRent      ||
+        exp.rentSplit      !== nextRentSplit ||
+        exp.utilities      !== nextUtil      ||
+        exp.utilitiesSplit !== nextUtilSplit ||
+        exp.groceries      !== nextGroc;
+      if (!changed) return;
+      exp.rent           = nextRent;
+      exp.rentSplit      = nextRentSplit;
+      exp.utilities      = nextUtil;
+      exp.utilitiesSplit = nextUtilSplit;
+      exp.groceries      = nextGroc;
+      // Clear the legacy combined "expenses" field so it doesn't double-count
+      exp.expenses       = 0;
+      budget.expenses = exp;
+      localStorage.setItem("ledger:budget", JSON.stringify(budget));
+      window.__ledgerData = { ...(window.__ledgerData || {}), expenses: exp };
+    } catch {}
+  }, [
+    JSON.stringify(household.shared || {}),
+    household.splitMode,
+    household.members.length,
+    JSON.stringify(household.customSplits || {}),
+    JSON.stringify(household.members.map((m) => ({ salary: m.salary, bonus: m.bonus, additionalIncome: m.additionalIncome, filing: m.filing, state: m.state }))),
   ]);
 
   const updMember = (id, patch) => setHousehold((h) => ({
