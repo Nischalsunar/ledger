@@ -9933,7 +9933,7 @@ function InvestingCalculator({ profile, getBudgetData }) {
   const [tick, setTick] = useStateInvest(0);
   // Funding source: "budget" = use leftover from Budget tab, "custom" = use a fixed monthly amount
   const [fundingMode, setFundingMode] = useStateInvest("budget");
-  const [customMonthly, setCustomMonthly] = useStateInvest(500);
+  const [customMonthly, setCustomMonthly] = useStateInvest(0);
   // Return rate input: "annual" or "monthly" — how the user wants to enter return percentages
   const [rateMode, setRateMode] = useStateInvest("annual");
 
@@ -12402,12 +12402,17 @@ function OverviewCalculator({ profile, getBudgetData }) {
       { label: "Savings & investing", value: savingsTarget, color: "#4DA77A", group: "Save" },
     ].filter((c) => c.value > 0);
 
-    const totalOut = categories.reduce((a, c) => a + c.value, 0);
-    const leftover = monthlyTakeHome - totalOut;
+    // True outflows = everything in the "Out" group (real bills, taxes, debt minimums).
+    // Savings + extra debt paydown are ALLOCATIONS of leftover, not outflows —
+    // they're still your money, just earmarked. So leftover = take-home − Out only.
+    const totalOut = categories.reduce((a, c) => a + c.value, 0);            // includes Save (for backward compat with the chart)
+    const realOutflows = categories.filter((c) => c.group === "Out").reduce((a, c) => a + c.value, 0);
+    const earmarked    = categories.filter((c) => c.group === "Save").reduce((a, c) => a + c.value, 0);
+    const leftover = monthlyTakeHome - realOutflows; // POSITIVE leftover includes savings
 
     return {
       tax, monthlyTakeHome, monthlyTax,
-      categories, totalOut, leftover,
+      categories, totalOut, realOutflows, earmarked, leftover,
       autoMonthly, debtTotal, savingsTarget, extraToDebt,
       auto, debt, invest, household,
       expenses,
@@ -12451,7 +12456,11 @@ function OverviewCalculator({ profile, getBudgetData }) {
                 {data.leftover >= 0 ? "+" : ""}{fmtUSD0(data.leftover * mult)}
               </div>
               <div className="hero-sub">
-                {data.leftover >= 0 ? "untracked / discretionary" : "shortfall — adjust elsewhere"}
+                {data.leftover >= 0
+                  ? (data.earmarked > 0
+                      ? `includes ${fmtUSD0(data.earmarked * mult)} you've earmarked for savings & extra debt`
+                      : "untracked / discretionary")
+                  : "shortfall — adjust elsewhere"}
               </div>
             </div>
             <div className="hero-divider" />
@@ -12700,16 +12709,25 @@ function HealthCheck({ data }) {
 // Lists 3-4 specific cut suggestions ranked by impact, each with a one-click apply.
 function OptimizePanel({ data, view, mult }) {
   if (!data || data.leftover >= 0) {
-    // Already in surplus — give a quick "you could do more" prompt
+    // Already in surplus
+    const trulyUntracked = data.leftover - (data.earmarked || 0);
     return (
       <section className="optimize-panel optimize-panel-good">
         <div className="optimize-icon">✓</div>
         <div className="optimize-body">
-          <div className="optimize-title">You're in the green — {fmtUSD0(data.leftover * mult)}{view === "monthly" ? "/mo" : "/yr"} discretionary</div>
+          <div className="optimize-title">
+            You're in the green — {fmtUSD0(data.leftover * mult)}{view === "monthly" ? "/mo" : "/yr"} after bills
+          </div>
           <div className="optimize-sub">
-            That money isn't going anywhere tracked. Consider routing more of it to{" "}
-            <strong>investments</strong> or your{" "}
-            <strong>emergency fund</strong> instead of letting it drift.
+            {data.earmarked > 0 ? (
+              <>You've earmarked <strong>{fmtUSD0(data.earmarked * mult)}</strong> for savings & extra debt paydown.
+              {trulyUntracked > 0
+                ? <> The remaining <strong>{fmtUSD0(trulyUntracked * mult)}</strong> is untracked — route it toward investments or your emergency fund.</>
+                : <> Every dollar has a job — well done.</>}
+              </>
+            ) : (
+              <>That money isn't going anywhere tracked. Consider routing it to <strong>investments</strong> or your <strong>emergency fund</strong>.</>
+            )}
           </div>
         </div>
       </section>
