@@ -11647,6 +11647,15 @@ function InvestingCalculator({ profile, getBudgetData }) {
   const [years, setYears] = useStateInvest(10);
   const [horizonUnit, setHorizonUnit] = useStateInvest("years");
   const [view, setView] = useStateInvest("yearly");
+  // For short horizons (≤24 months) yearly view collapses everything to 1-2 data
+  // points making the chart look broken. Auto-switch to monthly so the user sees
+  // meaningful detail. User can still manually override to yearly afterwards.
+  const [userPickedView, setUserPickedView] = useStateInvest(false);
+  useEffectInvest(() => {
+    if (!userPickedView && years <= 2) setView("monthly");
+    if (!userPickedView && years > 2)  setView("yearly");
+  }, [years, userPickedView]);
+  const handleViewChange = (v) => { setView(v); setUserPickedView(true); };
   const [tick, setTick] = useStateInvest(0);
   // Funding source: "budget" = use leftover from Budget tab, "custom" = use a fixed monthly amount
   const [fundingMode, setFundingMode] = useStateInvest("budget");
@@ -11752,7 +11761,7 @@ function InvestingCalculator({ profile, getBudgetData }) {
             <div className="view-toggle">
               <Segment
                 value={view}
-                onChange={setView}
+                onChange={handleViewChange}
                 options={[
                   { value: "yearly",  label: "Yearly" },
                   { value: "monthly", label: "Monthly" },
@@ -15143,18 +15152,16 @@ function OverviewCalculator({ profile, getBudgetData }) {
         {/* Consistent across pages: leftover/after-expenses on LEFT, take-home on RIGHT,
             with a "going to savings" block in the middle so the user sees all three at a glance. */}
         <section className="hero-card">
-          <div className="hero-grid" style={{ gridTemplateColumns: data.earmarked > 0 ? "1fr auto 1fr auto 1fr" : "1fr auto 1fr" }}>
+          <div className="hero-grid" style={{ gridTemplateColumns: data.earmarked > 0 ? "1fr auto 1fr auto 1fr auto 1fr" : "1fr auto 1fr" }}>
             <div className="hero-block">
-              <div className="hero-eyebrow">{view === "monthly" ? "Monthly" : "Annual"} after expenses</div>
+              <div className="hero-eyebrow">{view === "monthly" ? "Monthly" : "Annual"} after bills</div>
               <div className={"hero-num " + (data.leftover >= 0 ? "surplus" : "deficit")}>
                 {data.leftover >= 0 ? "+" : ""}{fmtUSD0(data.leftover * mult)}
               </div>
               <div className="hero-sub">
                 {data.leftover >= 0
-                  ? (data.earmarked > 0
-                      ? `incl. savings · ${fmtUSD0(data.discretionary * mult)} discretionary`
-                      : "untracked / discretionary")
-                  : "shortfall — adjust elsewhere"}
+                  ? "left after rent, food, vehicle, debt mins"
+                  : "shortfall — bills exceed take-home"}
               </div>
             </div>
 
@@ -15162,12 +15169,27 @@ function OverviewCalculator({ profile, getBudgetData }) {
               <>
                 <div className="hero-divider" />
                 <div className="hero-block">
-                  <div className="hero-eyebrow">{view === "monthly" ? "Monthly" : "Annual"} going to savings</div>
+                  <div className="hero-eyebrow">{view === "monthly" ? "Monthly" : "Annual"} earmarked</div>
                   <div className="hero-num pos">{fmtUSD0(data.earmarked * mult)}</div>
                   <div className="hero-sub">
                     {data.savingsTarget > 0 && `${fmtUSD0(data.savingsTarget * mult)} savings`}
                     {data.savingsTarget > 0 && data.extraToDebt > 0 && " · "}
                     {data.extraToDebt > 0 && `${fmtUSD0(data.extraToDebt * mult)} extra debt`}
+                  </div>
+                </div>
+                <div className="hero-divider" />
+                {/* Discretionary = leftover − earmarked. RED if negative (over-committed). */}
+                <div className="hero-block">
+                  <div className="hero-eyebrow">{view === "monthly" ? "Monthly" : "Annual"} discretionary</div>
+                  <div className={"hero-num " + (data.discretionary >= 0 ? "surplus" : "deficit")}>
+                    {data.discretionary >= 0 ? "+" : ""}{fmtUSD0(data.discretionary * mult)}
+                  </div>
+                  <div className="hero-sub">
+                    {data.discretionary >= 0
+                      ? "free to spend after earmarks"
+                      : <span style={{ color: "var(--negative)", fontWeight: 500 }}>
+                          over-committed by {fmtUSD0(Math.abs(data.discretionary) * mult)} — reduce savings/debt extras
+                        </span>}
                   </div>
                 </div>
               </>
@@ -15346,7 +15368,26 @@ function HealthCheck({ data }) {
 function OptimizePanel({ data, view, mult }) {
   if (!data || data.leftover >= 0) {
     // Already in surplus
-    const trulyUntracked = data.leftover - (data.earmarked || 0);
+    const trulyUntracked = data.discretionary;
+    // OVER-COMMITTED case: leftover after bills is positive, but earmarked > leftover
+    // (user planned to save/pay-down more than they have left). Render a yellow warning.
+    if (trulyUntracked < 0) {
+      const overBy = Math.abs(trulyUntracked);
+      return (
+        <section className="optimize-panel optimize-panel-bad">
+          <div className="optimize-icon">⚠</div>
+          <div className="optimize-body">
+            <div className="optimize-title">
+              Over-committed by {fmtUSD0(overBy * mult)}{view === "monthly" ? "/mo" : "/yr"}
+            </div>
+            <div className="optimize-sub">
+              After bills you have <strong>{fmtUSD0(data.leftover * mult)}</strong> left, but you've earmarked <strong>{fmtUSD0(data.earmarked * mult)}</strong> for savings + extra debt paydown.
+              That's <strong>{fmtUSD0(overBy * mult)}</strong> more than you actually have. Reduce one of the earmarks on the Debt tab — your plan won't fit your take-home.
+            </div>
+          </div>
+        </section>
+      );
+    }
     return (
       <section className="optimize-panel optimize-panel-good">
         <div className="optimize-icon">✓</div>
@@ -15358,7 +15399,7 @@ function OptimizePanel({ data, view, mult }) {
             {data.earmarked > 0 ? (
               <>You've earmarked <strong>{fmtUSD0(data.earmarked * mult)}</strong> for savings & extra debt paydown.
               {trulyUntracked > 0
-                ? <> The remaining <strong>{fmtUSD0(trulyUntracked * mult)}</strong> is untracked — route it toward investments or your emergency fund.</>
+                ? <> The remaining <strong>{fmtUSD0(trulyUntracked * mult)}</strong> is discretionary — route it toward investments or your emergency fund.</>
                 : <> Every dollar has a job — well done.</>}
               </>
             ) : (
