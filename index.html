@@ -12084,12 +12084,18 @@ function DebtPayoff({ getBudgetData }) {
         typeof saved.savingsAPY === "number" && setSavingsAPY(saved.savingsAPY);
         typeof saved.paymentFreq === "number" && setPaymentFreq(saved.paymentFreq);
         saved.strategy && setStrategy(saved.strategy);
+        if (typeof saved.customDebtAmount === "number") setCustomDebtAmount(saved.customDebtAmount);
       }
     } catch {}
   }, []);
   useEffectDebt(() => {
-    localStorage.setItem("ledger:debt", JSON.stringify({ debts, spareCash, autoSpare, debtPct, savingsAPY, paymentFreq, strategy }));
-  }, [debts, spareCash, autoSpare, debtPct, savingsAPY, paymentFreq, strategy]);
+    // Persist customDebtAmount too so the Overview tab can read it (was the missing piece —
+    // user's exact override on Debt page wasn't flowing to Overview before).
+    localStorage.setItem("ledger:debt", JSON.stringify({
+      debts, spareCash, autoSpare, debtPct, savingsAPY, paymentFreq, strategy,
+      customDebtAmount,
+    }));
+  }, [debts, spareCash, autoSpare, debtPct, savingsAPY, paymentFreq, strategy, customDebtAmount]);
 
   // Derive extra-toward-debt and to-savings from EITHER the % slider OR a custom $ amount.
   // When customDebtAmount is a number, it wins (and the slider is shown as just a visual).
@@ -12662,10 +12668,16 @@ function OverviewCalculator({ profile, getBudgetData }) {
 
     // Debt monthly outflow
     const debtTotal = (debt.debts || []).reduce((a, b) => a + (b.minPayment || 0), 0);
-    const extraToDebt = (debt.spareCash || 0) * (debt.debtPct || 0);
+    // Honor the user's "Exact amount toward debt" override from the Debt tab if set,
+    // otherwise fall back to spareCash * debtPct. Without this, the Overview was
+    // showing the old slider math and ignoring the user's manual override.
+    const useCustomDebt = debt.customDebtAmount != null && debt.customDebtAmount >= 0;
+    const extraToDebt = useCustomDebt
+      ? Math.min(debt.customDebtAmount || 0, debt.spareCash || 0)
+      : (debt.spareCash || 0) * (debt.debtPct || 0);
 
-    // Savings allocation (from investing card)
-    const savingsTarget = (debt.spareCash || 0) * (1 - (debt.debtPct || 0));
+    // Savings = whatever's left after the debt portion is taken from spareCash
+    const savingsTarget = Math.max(0, (debt.spareCash || 0) - extraToDebt);
 
     // Categorize budget expenses
     const rent = expenses.rent || 0;
