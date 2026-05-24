@@ -747,6 +747,41 @@ input, select { font: inherit; color: inherit; }
   background: var(--border);
   margin: 4px 6px;
 }
+.profile-corner-mode-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+  padding: 6px 14px 4px;
+}
+.profile-corner-mode-toggle {
+  display: flex;
+  gap: 4px;
+  padding: 0 6px 6px;
+}
+.profile-corner-mode-btn {
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid var(--border-2);
+  background: var(--surface);
+  color: var(--ink-2);
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  transition: all 0.15s ease;
+}
+.profile-corner-mode-btn:hover {
+  border-color: var(--accent);
+  color: var(--ink);
+}
+.profile-corner-mode-btn.is-active {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
+
 .profile-corner-item {
   display: flex;
   align-items: center;
@@ -5163,6 +5198,15 @@ const { useState: useStateAuth, useEffect: useEffectAuth } = React;
 
 const AUTH_USER_KEY    = "ledger:auth:currentUser";   // email of logged-in user (NOT namespaced)
 const AUTH_ACCOUNTS_KEY = "ledger:auth:accounts";     // map { email: { name, passHash } } (NOT namespaced)
+const VIEW_MODE_KEY     = "ledger:auth:viewMode";     // "admin" | "user" — toggle for admin-allowed emails
+
+// Only these emails can ever access admin features. Everyone else is locked to user mode.
+const ADMIN_EMAILS = ["nischalsunar44@gmail.com"];
+function isAdminEmail(email) {
+  return ADMIN_EMAILS.includes((email || "").toLowerCase().trim());
+}
+window.__isAdminEmail = isAdminEmail;
+window.__ADMIN_EMAILS = ADMIN_EMAILS;
 
 // ─── localStorage namespace shim ─────────────────────────────────────────
 // Patches localStorage.{get,set,remove}Item so any key starting with "ledger:"
@@ -5202,7 +5246,23 @@ async function hashPassword(password) {
 }
 
 function loadAccounts() {
-  try { return JSON.parse(window.__rawStorage.get(AUTH_ACCOUNTS_KEY) || "{}"); }
+  try {
+    const map = JSON.parse(window.__rawStorage.get(AUTH_ACCOUNTS_KEY) || "{}");
+    // Migration: enforce the admin-email whitelist on every load — any account
+    // that was previously auto-assigned admin (via the old first-account rule)
+    // gets demoted to "user" unless their email is on the whitelist.
+    let changed = false;
+    for (const [email, account] of Object.entries(map)) {
+      const shouldBeAdmin = isAdminEmail(email);
+      const isAdmin = account.role === "admin";
+      if (shouldBeAdmin && !isAdmin)      { account.role = "admin"; changed = true; }
+      else if (!shouldBeAdmin && isAdmin) { account.role = "user";  changed = true; }
+    }
+    if (changed) {
+      window.__rawStorage.set(AUTH_ACCOUNTS_KEY, JSON.stringify(map));
+    }
+    return map;
+  }
   catch { return {}; }
 }
 function saveAccounts(map) {
@@ -5246,15 +5306,14 @@ function LoginScreen({ onLoggedIn }) {
         const cleanFirst = firstName.trim();
         const cleanLast = lastName.trim();
         const displayName = (cleanFirst + " " + cleanLast).trim() || cleanEmail.split("@")[0];
-        // First account on this browser auto-becomes admin (can see other users on same browser).
-        // Subsequent signups are regular users. Admin can promote/demote others later from the Admin tab.
-        const isFirstAccount = Object.keys(map).length === 0;
+        // Admin role is locked to the hard-coded ADMIN_EMAILS whitelist.
+        // Any other email = regular user, no admin features ever.
         map[cleanEmail] = {
           firstName: cleanFirst,
           lastName: cleanLast,
           name: displayName,
           passHash: hash,
-          role: isFirstAccount ? "admin" : "user",
+          role: isAdminEmail(cleanEmail) ? "admin" : "user",
           createdAt: new Date().toISOString(),
           lastSignIn: new Date().toISOString(),
         };
@@ -13139,19 +13198,7 @@ function AdminCalculator() {
     };
   };
 
-  const promote = (email) => {
-    if (!window.confirm(`Make ${accounts[email]?.name || email} an admin too?`)) return;
-    const next = { ...accounts, [email]: { ...accounts[email], role: "admin" } };
-    window.__rawStorage.set("ledger:auth:accounts", JSON.stringify(next));
-    setTick((t) => t + 1);
-  };
-  const demote = (email) => {
-    if (email === currentEmail) { alert("You can't demote yourself."); return; }
-    if (!window.confirm(`Remove admin role from ${accounts[email]?.name || email}?`)) return;
-    const next = { ...accounts, [email]: { ...accounts[email], role: "user" } };
-    window.__rawStorage.set("ledger:auth:accounts", JSON.stringify(next));
-    setTick((t) => t + 1);
-  };
+  // Promote/demote disabled — role is determined by the hardcoded ADMIN_EMAILS whitelist.
   const deleteAccount = (email) => {
     if (email === currentEmail) { alert("You can't delete the account you're signed in to. Sign in as another admin first."); return; }
     if (!window.confirm(`Permanently delete ${email}? This removes the account AND all their saved data on this browser. Cannot be undone.`)) return;
@@ -13187,9 +13234,12 @@ function AdminCalculator() {
       </header>
 
       <div className="admin-explainer">
-        <strong>🔐 Where this data lives:</strong> all accounts and finances are stored in your browser's
-        localStorage on THIS device only. There's no server. Admin = you can see / manage the accounts that
-        have signed up on this same browser. You cannot see accounts on other people's devices.
+        <strong>🔐 Admin access:</strong> the Admin tab is restricted to a single whitelisted email
+        (<code>{(window.__ADMIN_EMAILS || []).join(", ")}</code>). Even if other users sign up on this browser,
+        they can never see this tab — they're locked to user mode.
+        <br/><br/>
+        <strong>Where this data lives:</strong> all accounts and finances are in your browser's localStorage on
+        THIS device only. There's no server. You can only see users who signed up on the same browser.
       </div>
 
       <div className="admin-layout">
@@ -13231,10 +13281,6 @@ function AdminCalculator() {
                     </td>
                     <td>{fmtDate(a.lastSignIn || a.createdAt)}</td>
                     <td onClick={(e) => e.stopPropagation()}>
-                      {a.role === "admin"
-                        ? <button className="btn-link" onClick={() => demote(email)} disabled={email === currentEmail}>demote</button>
-                        : <button className="btn-link" onClick={() => promote(email)}>make admin</button>}
-                      <span style={{ color: "var(--ink-4)", margin: "0 6px" }}>·</span>
                       <button className="btn-link admin-danger" onClick={() => deleteAccount(email)} disabled={email === currentEmail}>delete</button>
                     </td>
                   </tr>
@@ -13537,11 +13583,10 @@ function AccountPhase({ data, setData, next }) {
       if (mode === "signup") {
         if (map[cleanEmail]) { setError("That email is already registered. Sign in instead."); setBusy(false); return; }
         const displayName = `${firstName.trim()} ${lastName.trim()}`.trim() || cleanEmail.split("@")[0];
-        // First account on browser becomes admin automatically
-        const isFirstAccount = Object.keys(map).length === 0;
+        // Admin role is locked to a whitelist of emails. Any other email = regular user.
         map[cleanEmail] = {
           firstName: firstName.trim(), lastName: lastName.trim(), name: displayName,
-          passHash: hash, role: isFirstAccount ? "admin" : "user",
+          passHash: hash, role: window.__isAdminEmail?.(cleanEmail) ? "admin" : "user",
           createdAt: new Date().toISOString(), lastSignIn: new Date().toISOString(),
         };
         window.__rawStorage.set("ledger:auth:accounts", JSON.stringify(map));
@@ -14361,6 +14406,19 @@ function useProfile() {
 // Top-right profile dropdown — avatar + click-to-expand menu
 function ProfileCorner() {
   const [open, setOpen] = useStateApp(false);
+  const [viewMode, setViewMode] = useStateApp(() => {
+    try { return window.__rawStorage?.get?.("ledger:auth:viewMode") || "user"; }
+    catch { return "user"; }
+  });
+  // Expose so the sidebar can read it to filter Admin tab visibility
+  React.useEffect(() => { window.__viewMode = viewMode; }, [viewMode]);
+  const setMode = (m) => {
+    setViewMode(m);
+    try { window.__rawStorage?.set?.("ledger:auth:viewMode", m); } catch {}
+    setOpen(false);
+    // Force the sidebar to re-render so the Admin tab appears/disappears immediately
+    window.dispatchEvent(new Event("storage"));
+  };
   React.useEffect(() => {
     if (!open) return;
     const close = (e) => {
@@ -14409,7 +14467,9 @@ function ProfileCorner() {
               <div className="profile-corner-meta-name">{display}</div>
               <div className="profile-corner-meta-email">
                 {u.email === "_guest" ? "Guest · data not saved" : u.email}
-                {u.role === "admin" && <span className="admin-role-pill is-admin" style={{ marginLeft: 6 }}>ADMIN</span>}
+                {window.__isAdminEmail?.(u.email) && viewMode === "admin" && (
+                  <span className="admin-role-pill is-admin" style={{ marginLeft: 6 }}>ADMIN MODE</span>
+                )}
               </div>
               {lastSeen && (
                 <div className="profile-corner-meta-lastseen">Signed in {lastSeen}</div>
@@ -14417,6 +14477,23 @@ function ProfileCorner() {
             </div>
           </div>
           <div className="profile-corner-divider" />
+          {/* View mode toggle — only shown to whitelisted admin emails */}
+          {window.__isAdminEmail?.(u.email) && (
+            <>
+              <div className="profile-corner-mode-label">View as</div>
+              <div className="profile-corner-mode-toggle">
+                <button
+                  className={"profile-corner-mode-btn" + (viewMode === "user" ? " is-active" : "")}
+                  onClick={() => setMode("user")}
+                >👤 User</button>
+                <button
+                  className={"profile-corner-mode-btn" + (viewMode === "admin" ? " is-active" : "")}
+                  onClick={() => setMode("admin")}
+                >⚙ Admin</button>
+              </div>
+              <div className="profile-corner-divider" />
+            </>
+          )}
           <button className="profile-corner-item" onClick={() => { setOpen(false); window.__switchAccount && window.__switchAccount(); }}>
             <span style={{ width: 20 }}>↻</span> Switch account
           </button>
@@ -14621,7 +14698,12 @@ function App() {
                 } catch { return false; }
               }
               if (c.id === "admin") {
-                return window.__currentUser?.role === "admin";
+                // Admin tab only shows when:
+                //  1. The signed-in email is on the hardcoded ADMIN_EMAILS whitelist, AND
+                //  2. The view mode is currently "admin" (user can toggle to hide it)
+                const email = window.__currentUser?.email;
+                if (!window.__isAdminEmail?.(email)) return false;
+                return window.__viewMode === "admin";
               }
               return true;
             })
