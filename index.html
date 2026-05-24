@@ -10425,6 +10425,13 @@ const INVEST_PLATFORMS = [
   "Coinbase", "Binance", "Kraken", "Public", "M1 Finance", "Acorns", "SoFi", "Other"
 ];
 
+// Common goals you might compound towards. Used as quick-pick chips when an
+// investment is in Compound=Yes mode.
+const INVEST_GOALS = [
+  "College fund", "House fund", "Retirement", "Emergency fund", "Wedding",
+  "Travel fund", "New car", "Business fund", "Kids' future", "Early retirement",
+];
+
 // Return-period options. Each maps to a per-period rate the user enters; we convert to annual.
 const RETURN_PERIODS = {
   monthly: { label: "Monthly",  per: 12, defaultHorizon: "short" },
@@ -10480,6 +10487,7 @@ function migrateInvestment(inv) {
     platform:     inv.platform || "Other",
     principle:    inv.principle != null ? Number(inv.principle) : 0,
     compound:     inv.compound != null ? !!inv.compound : false,
+    goal:         inv.goal || "",
   };
 }
 
@@ -10650,6 +10658,7 @@ function PortfolioEditor({ portfolio, setPortfolio, rateMode = "annual", totalMo
         platform: preset?.platform || "Other",
         principle: 0,
         compound: false,
+        goal: "",
       }],
     }));
   };
@@ -10822,7 +10831,11 @@ function PortfolioEditor({ portfolio, setPortfolio, rateMode = "annual", totalMo
               {!open && (
                 <button type="button" className="debt-card-summary" onClick={() => toggleInv(m.id)}>
                   {m.compound ? (
-                    <span><strong>{fmtUSD0(m.principle)}/mo</strong> <span style={{color:"var(--accent-2)"}}>compounding</span></span>
+                    <span>
+                      <strong>{fmtUSD0(m.principle)}/mo</strong>{" "}
+                      <span style={{color:"var(--accent-2)"}}>compounding</span>
+                      {m.goal && <span style={{color:"var(--gold)"}}> → {m.goal}</span>}
+                    </span>
                   ) : (
                     <span>
                       <strong>{(m.pct * 100).toFixed(1)}%</strong>
@@ -10948,6 +10961,34 @@ function PortfolioEditor({ portfolio, setPortfolio, rateMode = "annual", totalMo
                       ]}
                     />
                   </Field>
+                  {m.compound && (
+                    <Field
+                      label="Goal / purpose"
+                      hint="what this money is for"
+                    >
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <input
+                          type="text"
+                          className="text-input"
+                          value={m.goal}
+                          onChange={(e) => updateInvestment(m.id, { goal: e.target.value })}
+                          placeholder="e.g. College fund"
+                        />
+                        <div className="port-presets" style={{ gap: 4 }}>
+                          {INVEST_GOALS.filter((g) => g.toLowerCase() !== (m.goal || "").toLowerCase()).slice(0, 6).map((g) => (
+                            <button
+                              key={g}
+                              type="button"
+                              className="port-preset-btn"
+                              onClick={() => updateInvestment(m.id, { goal: g })}
+                            >
+                              {g}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </Field>
+                  )}
                 </div>
               )}
             </div>
@@ -13521,6 +13562,16 @@ function DebtPayoff({ getBudgetData }) {
             </div>
           </div>
 
+          {/* Per-debt payment allocation — shows where each dollar of the monthly
+              debt budget actually goes (minimum + extra rolled to one target). */}
+          {debts.length > 0 && (
+            <DebtAllocationCard
+              debts={debts}
+              extra={extra}
+              strategy={strategy}
+            />
+          )}
+
           <section className="card">
             <header className="card-head">
               <h2>How splitting changes the outcome</h2>
@@ -13779,6 +13830,128 @@ function DebtPayoff({ getBudgetData }) {
   );
 }
 
+// ─── Per-debt allocation card ────────────────────────────────────────────
+// Shows where each dollar of the user's monthly debt budget actually flows:
+// each debt's minimum payment, plus the strategy-targeted debt receives the
+// entire "extra" amount on top. Collapsible card with chevron header.
+function DebtAllocationCard({ debts, extra, strategy }) {
+  const [open, setOpen] = useStateDebt(true);
+  // Pick the strategy-targeted debt: highest APR (avalanche) or smallest balance (snowball)
+  const active = debts.filter((d) => (Number(d.balance) || 0) > 0);
+  const sorted = [...active].sort((a, b) =>
+    strategy === "snowball" ? (a.balance - b.balance) : (b.apr - a.apr)
+  );
+  const target = sorted[0]; // the one getting the extra
+  const minTotal = active.reduce((a, d) => a + (Number(d.minPayment) || 0), 0);
+  const totalMonthly = minTotal + (Number(extra) || 0);
+
+  return (
+    <section className="card">
+      <header
+        className="card-head"
+        style={{ cursor: "pointer" }}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <h2 style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span className={"debt-card-chevron" + (open ? " is-open" : "")} style={{ pointerEvents: "none" }} aria-hidden="true">▾</span>
+          Where each dollar goes
+        </h2>
+        <span className="card-tag">
+          {fmtUSD0(totalMonthly)}/mo · {active.length} debt{active.length !== 1 ? "s" : ""}
+        </span>
+      </header>
+      {open && <div className="card-body">
+        <p className="footnote" style={{ marginTop: 0 }}>
+          Each debt receives its <strong>minimum payment</strong> every month.
+          Your <strong>extra {fmtUSD0(extra)}/mo</strong> is rolled to the {strategy === "snowball" ? "smallest-balance" : "highest-APR"} debt
+          {target ? <> — currently <strong>{target.name}</strong></> : ""}.
+        </p>
+
+        <table className="ptable" style={{ marginTop: 12 }}>
+          <thead>
+            <tr>
+              <th>Debt</th>
+              <th className="num">Balance</th>
+              <th className="num">APR</th>
+              <th className="num">Minimum</th>
+              <th className="num">+ Extra</th>
+              <th className="num">Total this month</th>
+              <th className="num">% of budget</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((d) => {
+              const min = Number(d.minPayment) || 0;
+              const extraPart = (target && d === target) ? (Number(extra) || 0) : 0;
+              const total = min + extraPart;
+              const pctOfBudget = totalMonthly > 0 ? total / totalMonthly : 0;
+              return (
+                <tr key={d.name}>
+                  <td>
+                    {d.name}
+                    {target && d === target && (
+                      <span className="card-tag" style={{ marginLeft: 8, fontSize: 10 }}>
+                        ⚡ target
+                      </span>
+                    )}
+                  </td>
+                  <td className="num">{fmtUSD0(d.balance)}</td>
+                  <td className="num">{fmtPct(d.apr || 0, 1)}</td>
+                  <td className="num">{fmtUSD0(min)}</td>
+                  <td className="num pos">{extraPart > 0 ? `+ ${fmtUSD0(extraPart)}` : "—"}</td>
+                  <td className="num"><strong>{fmtUSD0(total)}</strong></td>
+                  <td className="num">{(pctOfBudget * 100).toFixed(1)}%</td>
+                </tr>
+              );
+            })}
+            <tr style={{ borderTop: "2px solid var(--border-2)", fontWeight: 500 }}>
+              <td><strong>Total</strong></td>
+              <td className="num">{fmtUSD0(active.reduce((a, d) => a + (Number(d.balance) || 0), 0))}</td>
+              <td className="num">—</td>
+              <td className="num"><strong>{fmtUSD0(minTotal)}</strong></td>
+              <td className="num pos"><strong>+ {fmtUSD0(extra)}</strong></td>
+              <td className="num"><strong>{fmtUSD0(totalMonthly)}</strong></td>
+              <td className="num">100.0%</td>
+            </tr>
+          </tbody>
+        </table>
+
+        {/* Visual stacked bar — proportions of where the money goes */}
+        <div style={{ marginTop: 16 }}>
+          <div className="port-bar" style={{ height: 18 }}>
+            {sorted.map((d, i) => {
+              const min = Number(d.minPayment) || 0;
+              const extraPart = (target && d === target) ? (Number(extra) || 0) : 0;
+              const total = min + extraPart;
+              const w = totalMonthly > 0 ? (total / totalMonthly) * 100 : 0;
+              const isTarget = (target && d === target);
+              const color = isTarget ? "var(--accent-2)" : ["#C9A96E", "#5A8FA3", "#9C7C4B", "#4FB5B0", "#A07ABE"][i % 5];
+              return (
+                <div key={d.name}
+                  style={{ width: `${w}%`, background: color }}
+                  title={`${d.name}: ${fmtUSD0(total)} (${w.toFixed(1)}%)`}
+                />
+              );
+            })}
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 10, fontSize: 11, color: "var(--ink-3)" }}>
+            {sorted.map((d, i) => {
+              const isTarget = (target && d === target);
+              const color = isTarget ? "var(--accent-2)" : ["#C9A96E", "#5A8FA3", "#9C7C4B", "#4FB5B0", "#A07ABE"][i % 5];
+              return (
+                <span key={d.name}>
+                  <span style={{ display: "inline-block", width: 10, height: 10, background: color, marginRight: 4, verticalAlign: "middle" }} />
+                  {d.name}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      </div>}
+    </section>
+  );
+}
+
 window.DebtPayoff = DebtPayoff;
 
 </script>
@@ -13953,6 +14126,10 @@ function OverviewCalculator({ profile, getBudgetData }) {
         {/* ✦ Optimize — only shows when leftover < 0. Suggests specific cuts to flip the
             shortfall into a surplus, ranked by impact + ease (savings rate first, etc.) */}
         <OptimizePanel data={data} view={view} mult={mult} />
+
+        {/* Monthly / yearly breakdown — collapsible card showing each line item
+            side-by-side in both periods. Same idea as the Budget tab's breakdown. */}
+        <MonthlyYearlyBreakdown data={data} />
 
         <section className="card">
           <header className="card-head">
@@ -14327,6 +14504,89 @@ function OptimizePanel({ data, view, mult }) {
           </li>
         ))}
       </ul>
+    </section>
+  );
+}
+
+// ─── Monthly / Yearly breakdown ──────────────────────────────────────────
+// Collapsible card on the Overview page that lists income, taxes, every
+// expense category, debt, savings, surplus — in both monthly AND yearly
+// columns side-by-side. Lets the user compare per-period totals at a glance.
+function MonthlyYearlyBreakdown({ data }) {
+  const [open, setOpen] = useStateOv(true);
+  const cats = data?.categories || [];
+  const monthlyTakeHome = data?.monthlyTakeHome || 0;
+  const monthlyTax = data?.monthlyTax || 0;
+  const grossMonthly = monthlyTakeHome + monthlyTax;
+  const leftover = data?.leftover || 0;
+
+  const rows = [
+    { label: "Gross income",         value: grossMonthly,    kind: "in"  },
+    { label: "− Tax",                value: monthlyTax,      kind: "out" },
+    { label: "= Take-home",          value: monthlyTakeHome, kind: "sub" },
+    ...cats.filter((c) => c.group === "Out").map((c) => ({
+      label: `− ${c.label}`, value: c.value, kind: "out",
+    })),
+    { label: "= Available leftover", value: leftover,        kind: "sub" },
+    ...cats.filter((c) => c.group === "Save").map((c) => ({
+      label: `→ ${c.label}`, value: c.value, kind: "save",
+    })),
+    { label: "= Discretionary",      value: Math.max(0, leftover - cats.filter((c) => c.group === "Save").reduce((a, c) => a + c.value, 0)), kind: "sub" },
+  ];
+
+  return (
+    <section className={"card" + (open ? "" : " is-collapsed")}>
+      <header
+        className="card-head"
+        style={{ cursor: "pointer" }}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <h2 style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span className={"debt-card-chevron" + (open ? " is-open" : "")} style={{ pointerEvents: "none" }} aria-hidden="true">▾</span>
+          Monthly & yearly breakdown
+        </h2>
+        <span className="card-tag">
+          {fmtUSD0(grossMonthly)}/mo · {fmtUSD0(grossMonthly * 12)}/yr
+        </span>
+      </header>
+      {open && <div className="card-body">
+        <table className="ptable">
+          <thead>
+            <tr>
+              <th>Line</th>
+              <th className="num">Monthly</th>
+              <th className="num">Yearly</th>
+              <th className="num">% of gross</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => {
+              const pct = grossMonthly > 0 ? r.value / grossMonthly : 0;
+              const colorClass = r.kind === "in" ? "pos"
+                              : r.kind === "out" ? "neg"
+                              : r.kind === "save" ? "pos"
+                              : "";
+              const isSubtotal = r.kind === "sub";
+              return (
+                <tr key={i} style={isSubtotal ? { borderTop: "1px solid var(--border-2)", fontWeight: 500 } : {}}>
+                  <td>{isSubtotal ? <strong>{r.label}</strong> : r.label}</td>
+                  <td className={"num " + colorClass}>
+                    {isSubtotal ? <strong>{fmtUSD0(r.value)}</strong> : fmtUSD0(r.value)}
+                  </td>
+                  <td className={"num " + colorClass}>
+                    {isSubtotal ? <strong>{fmtUSD0(r.value * 12)}</strong> : fmtUSD0(r.value * 12)}
+                  </td>
+                  <td className="num" style={{ color: "var(--ink-3)" }}>{(pct * 100).toFixed(1)}%</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        <p className="footnote" style={{ marginTop: 12 }}>
+          Yearly column = monthly × 12. Subtotal rows (Take-home, Available leftover, Discretionary) show
+          where the money lands after each major slice.
+        </p>
+      </div>}
     </section>
   );
 }
