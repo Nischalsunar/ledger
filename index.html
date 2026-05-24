@@ -10231,7 +10231,7 @@ const INVEST_COLORS = ["#4DA77A", "#C9A96E", "#7B6E55", "#5A8FA3", "#9C7C4B", "#
 
 // Common brokerages / platforms — used as suggestions in the platform dropdown
 const INVEST_PLATFORMS = [
-  "Fidelity", "Vanguard", "Schwab", "Robinhood", "E*TRADE", "Wealthfront", "Betterment",
+  "Fidelity", "Vanguard", "Schwab", "Robinhood", "Webull", "E*TRADE", "Wealthfront", "Betterment",
   "Coinbase", "Binance", "Kraken", "Public", "M1 Finance", "Acorns", "SoFi", "Other"
 ];
 
@@ -10280,14 +10280,16 @@ const PRESET_INVESTMENTS = [
 ];
 
 // Migrate an old investment shape (just {id,name,pct,returnRate}) into the new one with defaults.
+// New fields (added later): principle (dollar amount) + compound (boolean — monthly contribution mode).
 function migrateInvestment(inv) {
-  if (inv.horizon) return inv; // already migrated
   return {
     ...inv,
-    horizon:      "long",
-    returnPeriod: "yearly",
-    returnInput:  inv.returnRate || 0,
+    horizon:      inv.horizon || "long",
+    returnPeriod: inv.returnPeriod || "yearly",
+    returnInput:  inv.returnInput != null ? inv.returnInput : (inv.returnRate || 0),
     platform:     inv.platform || "Other",
+    principle:    inv.principle != null ? Number(inv.principle) : 0,
+    compound:     inv.compound != null ? !!inv.compound : false,
   };
 }
 
@@ -10302,7 +10304,11 @@ function computeInvestmentProjection(years, portfolio, overrideAnnualSavings) {
   const total = portfolioTotal(portfolio);
   const factor = total > 0 ? 1 / total : 0;
   let emergencyBal = 0, reserveBal = 0;
-  const invBals = portfolio.investments.map(() => 0);
+  // Seed each investment with its lump-sum Principle when compound=false.
+  // When compound=true, Principle is the monthly contribution and starting balance is 0.
+  const migrated = portfolio.investments.map(migrateInvestment);
+  const invBals = migrated.map((inv) => inv.compound ? 0 : (Number(inv.principle) || 0));
+  const monthlyRates = migrated.map((inv) => Math.pow(1 + (inv.returnRate || 0), 1/12) - 1);
   const rows = [];
   for (const y of years) {
     const savings = overrideAnnualSavings != null
@@ -10310,14 +10316,29 @@ function computeInvestmentProjection(years, portfolio, overrideAnnualSavings) {
       : Math.max(0, y.leftover);
     emergencyBal += savings * portfolio.emergency * factor;
     reserveBal   += savings * portfolio.reserve   * factor;
-    portfolio.investments.forEach((inv, i) => {
-      invBals[i] = invBals[i] * (1 + inv.returnRate) + savings * inv.pct * factor;
+    migrated.forEach((inv, i) => {
+      // For compound=true, simulate 12 monthly compound steps each adding the principle.
+      if (inv.compound) {
+        const months = y.months || 12;
+        let bal = invBals[i];
+        const mRate = monthlyRates[i];
+        const monthly = Number(inv.principle) || 0;
+        for (let m = 0; m < months; m++) {
+          bal += monthly;
+          bal = bal * (1 + mRate);
+        }
+        invBals[i] = bal;
+      } else {
+        // Lump-sum principle already in invBals[i] on first iteration. Now grow annually
+        // and add this year's share of budget surplus.
+        invBals[i] = invBals[i] * (1 + (inv.returnRate || 0)) + savings * inv.pct * factor;
+      }
     });
     rows.push({
       year: y.year,
       savings,
       cash: { emergency: emergencyBal, reserve: reserveBal },
-      investments: portfolio.investments.map((inv, i) => ({
+      investments: migrated.map((inv, i) => ({
         name: inv.name,
         balance: invBals[i],
       })),
@@ -10330,9 +10351,11 @@ function computeInvestmentProjection(years, portfolio, overrideAnnualSavings) {
 function computeMonthlyInvestmentProjection(years, portfolio, overrideMonthlySavings) {
   const total = portfolioTotal(portfolio);
   const factor = total > 0 ? 1 / total : 0;
-  const monthlyRates = portfolio.investments.map((inv) => Math.pow(1 + inv.returnRate, 1/12) - 1);
+  const migrated = portfolio.investments.map(migrateInvestment);
+  const monthlyRates = migrated.map((inv) => Math.pow(1 + (inv.returnRate || 0), 1/12) - 1);
   let emergencyBal = 0, reserveBal = 0;
-  const invBals = portfolio.investments.map(() => 0);
+  // Seed lump-sum principle for non-compound investments
+  const invBals = migrated.map((inv) => inv.compound ? 0 : (Number(inv.principle) || 0));
   const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   const rows = [];
   for (const y of years) {
@@ -10342,11 +10365,14 @@ function computeMonthlyInvestmentProjection(years, portfolio, overrideMonthlySav
       : Math.max(0, y.leftover) / y.months;
     const mEm = monthlySavings * portfolio.emergency * factor;
     const mRe = monthlySavings * portfolio.reserve * factor;
-    const mInv = portfolio.investments.map((inv) => monthlySavings * inv.pct * factor);
+    // For non-compound: contribution from shared budget surplus. For compound: fixed principle/mo.
+    const mInv = migrated.map((inv) => inv.compound
+      ? (Number(inv.principle) || 0)
+      : monthlySavings * inv.pct * factor);
     for (let m = startMo; m < 12; m++) {
       emergencyBal += mEm;
       reserveBal   += mRe;
-      portfolio.investments.forEach((inv, i) => {
+      migrated.forEach((inv, i) => {
         invBals[i] = invBals[i] * (1 + monthlyRates[i]) + mInv[i];
       });
       rows.push({
@@ -10354,7 +10380,7 @@ function computeMonthlyInvestmentProjection(years, portfolio, overrideMonthlySav
         label: `${MONTHS[m]} ${y.year}`,
         savings: monthlySavings,
         cash: { emergency: emergencyBal, reserve: reserveBal },
-        investments: portfolio.investments.map((inv, i) => ({
+        investments: migrated.map((inv, i) => ({
           name: inv.name,
           balance: invBals[i],
         })),
@@ -10406,8 +10432,29 @@ function PortfolioEditor({ portfolio, setPortfolio, rateMode = "annual", totalMo
         returnInput: annualToPeriod(annualRate, returnPeriod), // displayed value for that period
         horizon,
         platform: preset?.platform || "Other",
+        principle: 0,
+        compound: false,
       }],
     }));
+  };
+
+  // Auto-balance allocation %s from each investment's Principle amount.
+  // Useful when the user enters dollar principles and wants the % column to
+  // reflect their relative weights without typing.
+  const balanceFromPrinciples = () => {
+    setPortfolio((p) => {
+      const investSum = p.investments.reduce((a, b) => a + (Number(b.principle) || 0), 0);
+      if (investSum <= 0) return p;
+      const nonInvest = (p.emergency || 0) + (p.reserve || 0);
+      const investBudget = Math.max(0, 1 - nonInvest);
+      return {
+        ...p,
+        investments: p.investments.map((inv) => ({
+          ...inv,
+          pct: investBudget * ((Number(inv.principle) || 0) / investSum),
+        })),
+      };
+    });
   };
   // Per-investment expand/collapse state (UI-only, not persisted)
   const [expandedInv, setExpandedInv] = useStateInvest({});
@@ -10517,6 +10564,11 @@ function PortfolioEditor({ portfolio, setPortfolio, rateMode = "annual", totalMo
               {investSum > totalMonthly * 1.001 && " (over)"}
             </span>
           )}
+          {portfolio.investments.some((i) => Number(i.principle) > 0) && (
+            <button className="btn-link" style={{ marginLeft: "auto" }} onClick={balanceFromPrinciples} title="Re-derive % from each investment's Principle">
+              ⚖ balance % from principles
+            </button>
+          )}
         </h3>
         {portfolio.investments.length === 0 && (
           <div className="port-empty">No investment types yet. Add one below ↓</div>
@@ -10553,10 +10605,15 @@ function PortfolioEditor({ portfolio, setPortfolio, rateMode = "annual", totalMo
               </div>
               {!open && (
                 <button type="button" className="debt-card-summary" onClick={() => toggleInv(m.id)}>
-                  <span>
-                    <strong>{(m.pct * 100).toFixed(1)}%</strong>
-                    {totalMonthly > 0 && <span style={{ color: "var(--accent-2)" }}> · {fmtUSD0(m.pct * totalMonthly)}/mo</span>}
-                  </span>
+                  {m.compound ? (
+                    <span><strong>{fmtUSD0(m.principle)}/mo</strong> <span style={{color:"var(--accent-2)"}}>compounding</span></span>
+                  ) : (
+                    <span>
+                      <strong>{(m.pct * 100).toFixed(1)}%</strong>
+                      {totalMonthly > 0 && <span style={{ color: "var(--accent-2)" }}> · {fmtUSD0(m.pct * totalMonthly)}/mo</span>}
+                      {Number(m.principle) > 0 && <span style={{ color: "var(--gold)" }}> · {fmtUSD0(m.principle)} principle</span>}
+                    </span>
+                  )}
                   <span className="debt-card-summary-sep">·</span>
                   <span>{periodPct}% {periodInfo.label.toLowerCase()}</span>
                   <span className="debt-card-summary-sep">·</span>
@@ -10569,15 +10626,19 @@ function PortfolioEditor({ portfolio, setPortfolio, rateMode = "annual", totalMo
                 <div className="inv-card-grid">
                   <Field
                     label="Allocation"
-                    hint={totalMonthly > 0 ? `${fmtUSD0(m.pct * totalMonthly)}/mo` : "% of savings"}
+                    hint={
+                      m.compound
+                        ? "ignored when compounding"
+                        : (totalMonthly > 0 ? `${fmtUSD0(m.pct * totalMonthly)}/mo` : "% of savings")
+                    }
                   >
-                    <div style={{ display: "flex", gap: 6 }}>
+                    <div style={{ display: "flex", gap: 6, opacity: m.compound ? 0.5 : 1, pointerEvents: m.compound ? "none" : "auto" }}>
                       <NumberInput
                         value={(m.pct * 100).toFixed(1)}
                         onChange={(v) => updateInvestment(m.id, { pct: v / 100 })}
                         suffix="%"
                       />
-                      {totalMonthly > 0 && (
+                      {totalMonthly > 0 && !m.compound && (
                         <Money
                           value={Math.round(m.pct * totalMonthly)}
                           onChange={(v) => updateInvestment(m.id, { pct: totalMonthly > 0 ? (v / totalMonthly) : 0 })}
@@ -10585,6 +10646,16 @@ function PortfolioEditor({ portfolio, setPortfolio, rateMode = "annual", totalMo
                         />
                       )}
                     </div>
+                  </Field>
+                  <Field
+                    label={m.compound ? "Monthly contribution" : "Principle (starting $)"}
+                    hint={m.compound ? "compounds at the return rate" : "one-time lump sum"}
+                  >
+                    <Money
+                      value={Number(m.principle) || 0}
+                      onChange={(v) => updateInvestment(m.id, { principle: Math.max(0, Number(v) || 0) })}
+                      placeholder="0"
+                    />
                   </Field>
                   <Field label="Time horizon" hint="how long you'll hold">
                     <Segment
@@ -10647,6 +10718,19 @@ function PortfolioEditor({ portfolio, setPortfolio, rateMode = "annual", totalMo
                     >
                       {INVEST_PLATFORMS.map((p) => <option key={p} value={p}>{p}</option>)}
                     </select>
+                  </Field>
+                  <Field
+                    label="Compound"
+                    hint={m.compound ? "fixed $ in monthly · compounds" : "share of budget · annual growth"}
+                  >
+                    <Segment
+                      value={m.compound ? "yes" : "no"}
+                      onChange={(v) => updateInvestment(m.id, { compound: v === "yes" })}
+                      options={[
+                        { value: "no",  label: "No"  },
+                        { value: "yes", label: "Yes" },
+                      ]}
+                    />
                   </Field>
                 </div>
               )}
