@@ -5294,6 +5294,65 @@ html[data-color-mode="light"] .date-input { color-scheme: light; }
   margin-top: 4px;
 }
 
+/* ===== Track-in-Overview toggle (pill switch) ===== */
+.track-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.track-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.track-toggle-pill {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  background: var(--border-2);
+  border-radius: 999px;
+  transition: background 160ms ease;
+  flex-shrink: 0;
+}
+.track-toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  background: var(--surface);
+  border-radius: 50%;
+  transition: transform 160ms ease, background 160ms ease;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+.track-toggle input:checked + .track-toggle-pill {
+  background: var(--accent);
+}
+.track-toggle input:checked + .track-toggle-pill .track-toggle-knob {
+  transform: translateX(18px);
+  background: #FFFFFF;
+}
+.track-toggle:hover .track-toggle-pill {
+  background: var(--ink-3);
+}
+.track-toggle input:checked:hover + .track-toggle-pill {
+  background: var(--accent-2);
+}
+.track-toggle input:focus-visible + .track-toggle-pill {
+  outline: 2px solid var(--accent-2);
+  outline-offset: 2px;
+}
+.track-toggle-label {
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.track-toggle input:checked ~ .track-toggle-label {
+  color: var(--accent-2);
+  font-weight: 500;
+}
+
 /* ===== Keyboard accessibility — :focus-visible everywhere ===== */
 /* Mouse clicks don't trigger these. Tab key (and other keyboard nav) does.
    Result: keyboard users see a clear focus ring, mouse users don't get ugly outlines. */
@@ -10814,12 +10873,35 @@ function migrateInvestment(inv) {
     principle:    inv.principle != null ? Number(inv.principle) : 0,
     compound:     inv.compound != null ? !!inv.compound : false,
     goal:         inv.goal || "",
+    trackInOverview: inv.trackInOverview !== false, // default ON
+    targetYears:  inv.targetYears != null ? Number(inv.targetYears) : null, // null = use global horizon
   };
 }
 
 function portfolioTotal(p) {
   return p.emergency + p.reserve + p.investments.reduce((a, b) => a + b.pct, 0);
 }
+
+// Project a single investment forward `years` years. Used by the Overview
+// tab to display each "tracked" investment's future value standalone.
+// Pure function — no side effects. Returns { final, contributed, interest }.
+function projectSingleInvestment(inv, years, monthlyFromBudget = 0) {
+  const m = migrateInvestment(inv);
+  const months = Math.max(1, Math.round((years || 0) * 12));
+  const mRate = Math.pow(1 + (m.returnRate || 0), 1/12) - 1;
+  let bal = m.compound ? 0 : (Number(m.principle) || 0);
+  let contributed = m.compound ? 0 : (Number(m.principle) || 0);
+  const monthlyContrib = m.compound
+    ? (Number(m.principle) || 0)
+    : monthlyFromBudget;
+  for (let i = 0; i < months; i++) {
+    bal += monthlyContrib;
+    contributed += monthlyContrib;
+    bal = safeBal(bal * (1 + mRate));
+  }
+  return { final: safeBal(bal), contributed, interest: safeBal(bal - contributed) };
+}
+window.projectSingleInvestment = projectSingleInvestment;
 
 // Compute year-by-year projection. Auto-normalizes allocations if total ≠ 100%.
 // `overrideAnnualSavings` — if provided, use this each year instead of y.leftover
@@ -10985,6 +11067,8 @@ function PortfolioEditor({ portfolio, setPortfolio, rateMode = "annual", totalMo
         principle: 0,
         compound: false,
         goal: "",
+        trackInOverview: true,
+        targetYears: null,
       }],
     }));
   };
@@ -11315,6 +11399,45 @@ function PortfolioEditor({ portfolio, setPortfolio, rateMode = "annual", totalMo
                       </div>
                     </Field>
                   )}
+
+                  {/* Track in Overview & Totals — pushes this investment's projected
+                      end-of-horizon balance into the Overview tab so the user sees
+                      it counted toward their future net worth. */}
+                  <Field
+                    label="Track in Overview & Totals"
+                    hint={m.trackInOverview
+                      ? "✓ this investment's projected balance shows in Overview"
+                      : "off — Overview ignores this investment"}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                      <label className="track-toggle">
+                        <input
+                          type="checkbox"
+                          checked={m.trackInOverview}
+                          onChange={(e) => updateInvestment(m.id, { trackInOverview: e.target.checked })}
+                        />
+                        <span className="track-toggle-pill">
+                          <span className="track-toggle-knob" />
+                        </span>
+                        <span className="track-toggle-label">{m.trackInOverview ? "Tracked" : "Hidden from Overview"}</span>
+                      </label>
+                      {m.trackInOverview && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <span className="footnote" style={{ fontStyle: "normal" }}>Project for:</span>
+                          <NumberInput
+                            value={m.targetYears != null ? m.targetYears : ""}
+                            onChange={(v) => updateInvestment(m.id, {
+                              targetYears: v === "" || v == null ? null : Math.max(1, Math.min(60, Math.round(Number(v))))
+                            })}
+                            suffix="yr"
+                          />
+                          <span className="footnote" style={{ fontStyle: "normal" }}>
+                            {m.targetYears == null ? "(use page horizon)" : ""}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </Field>
                 </div>
               )}
             </div>
@@ -14463,6 +14586,10 @@ function OverviewCalculator({ profile, getBudgetData }) {
             side-by-side in both periods. Same idea as the Budget tab's breakdown. */}
         <MonthlyYearlyBreakdown data={data} />
 
+        {/* Investment projections — lists every investment that has
+            "Track in Overview" turned on, with its goal and projected balance. */}
+        <TrackedInvestmentsCard data={data} />
+
         <section className="card">
           <header className="card-head">
             <h2>Where every dollar goes</h2>
@@ -14918,6 +15045,131 @@ function MonthlyYearlyBreakdown({ data }) {
           Yearly column = monthly × 12. Subtotal rows (Take-home, Available leftover, Discretionary) show
           where the money lands after each major slice.
         </p>
+      </div>}
+    </section>
+  );
+}
+
+// ─── Tracked investments card ────────────────────────────────────────────
+// Lists every investment that has trackInOverview=true and shows its
+// projected balance at its target horizon (or the page horizon if none set).
+// Collapsible. Pulls live from window.projectSingleInvestment so it stays
+// in sync with the Investing tab without re-computing the whole portfolio.
+function TrackedInvestmentsCard({ data }) {
+  const [open, setOpen] = useStateOv(true);
+  const invData   = data?.invest;
+  const portfolio = invData?.portfolio;
+  const pageYears = invData?.years || 10;
+
+  if (!portfolio?.investments?.length) return null;
+
+  // Migration + filter to "tracked" investments only
+  const migrate = (inv) => ({
+    ...inv,
+    compound: inv.compound != null ? !!inv.compound : false,
+    principle: inv.principle != null ? Number(inv.principle) : 0,
+    goal: inv.goal || "",
+    trackInOverview: inv.trackInOverview !== false,
+    targetYears: inv.targetYears != null ? Number(inv.targetYears) : null,
+    returnRate: Number(inv.returnRate) || 0,
+  });
+  const tracked = portfolio.investments.map(migrate).filter((i) => i.trackInOverview);
+  if (!tracked.length) return null;
+
+  // Compute each projection. For non-compound investments we don't know the
+  // monthly-from-budget here, so we project them as pure principle compounding.
+  const project = window.projectSingleInvestment || function (inv, yrs) {
+    const months = Math.max(1, Math.round((yrs || 0) * 12));
+    const mRate = Math.pow(1 + (inv.returnRate || 0), 1/12) - 1;
+    let bal = inv.compound ? 0 : (Number(inv.principle) || 0);
+    let c = inv.compound ? 0 : (Number(inv.principle) || 0);
+    const mc = inv.compound ? (Number(inv.principle) || 0) : 0;
+    for (let i = 0; i < months; i++) { bal += mc; c += mc; bal *= (1 + mRate); }
+    return { final: bal, contributed: c, interest: bal - c };
+  };
+
+  const rows = tracked.map((inv) => {
+    const yrs = inv.targetYears != null ? inv.targetYears : pageYears;
+    const proj = project(inv, yrs);
+    return { inv, yrs, ...proj };
+  });
+
+  const grandTotal = rows.reduce((a, r) => a + (r.final || 0), 0);
+  const grandContrib = rows.reduce((a, r) => a + (r.contributed || 0), 0);
+  const grandInterest = rows.reduce((a, r) => a + (r.interest || 0), 0);
+
+  return (
+    <section className={"card" + (open ? "" : " is-collapsed")}>
+      <header
+        className="card-head"
+        style={{ cursor: "pointer" }}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <h2 style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span className={"debt-card-chevron" + (open ? " is-open" : "")} style={{ pointerEvents: "none" }} aria-hidden="true">▾</span>
+          Investment projections
+        </h2>
+        <span className="card-tag">
+          {rows.length} tracked · {fmtUSD0(grandTotal)} projected
+        </span>
+      </header>
+      {open && <div className="card-body">
+        <p className="footnote" style={{ marginTop: 0 }}>
+          Each investment you toggled "Track in Overview" appears here, projected to its target horizon.
+          Toggle off on the Investing tab to hide one from this list.
+        </p>
+
+        <table className="ptable" style={{ marginTop: 12 }}>
+          <thead>
+            <tr>
+              <th>Investment</th>
+              <th>Goal</th>
+              <th className="num">Horizon</th>
+              <th className="num">Contributed</th>
+              <th className="num">Interest</th>
+              <th className="num">Projected balance</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.inv.id}>
+                <td>
+                  {r.inv.name}
+                  {r.inv.compound && <span className="card-tag" style={{ marginLeft: 8, fontSize: 10 }}>compound</span>}
+                </td>
+                <td>{r.inv.goal || <span style={{ color: "var(--ink-4)" }}>—</span>}</td>
+                <td className="num">{r.yrs} yr</td>
+                <td className="num">{fmtUSD0(r.contributed)}</td>
+                <td className="num pos">{fmtUSD0(r.interest)}</td>
+                <td className="num"><strong>{fmtUSD0(r.final)}</strong></td>
+              </tr>
+            ))}
+            <tr style={{ borderTop: "2px solid var(--border-2)", fontWeight: 500 }}>
+              <td colSpan={3}><strong>Total tracked</strong></td>
+              <td className="num"><strong>{fmtUSD0(grandContrib)}</strong></td>
+              <td className="num pos"><strong>{fmtUSD0(grandInterest)}</strong></td>
+              <td className="num"><strong>{fmtUSD0(grandTotal)}</strong></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div className="invest-breakdown-grid" style={{ marginTop: 18 }}>
+          <div className="invest-breakdown-cell">
+            <div className="invest-breakdown-label">You will contribute</div>
+            <div className="invest-breakdown-value">{fmtUSD0(grandContrib)}</div>
+            <div className="invest-breakdown-sub">across all tracked investments</div>
+          </div>
+          <div className="invest-breakdown-cell invest-breakdown-cell-accent">
+            <div className="invest-breakdown-label">Interest will earn</div>
+            <div className="invest-breakdown-value pos">{fmtUSD0(grandInterest)}</div>
+            <div className="invest-breakdown-sub">{grandContrib > 0 ? `+${((grandInterest / grandContrib) * 100).toFixed(0)}% on contributions` : "—"}</div>
+          </div>
+          <div className="invest-breakdown-cell invest-breakdown-cell-final">
+            <div className="invest-breakdown-label">Future balance</div>
+            <div className="invest-breakdown-value surplus">{fmtUSD0(grandTotal)}</div>
+            <div className="invest-breakdown-sub">at each investment's target horizon</div>
+          </div>
+        </div>
       </div>}
     </section>
   );
