@@ -10365,6 +10365,7 @@ function TaxEstimator({ profile, setProfile }) {
   });
   const monthlyTakeHome = tax.takeHome / 12;
   const biweekly = tax.takeHome / 26;
+  const [incomeOpen, setIncomeOpen] = useStateTax(true);
 
   // Marginal bracket
   const brackets = FEDERAL_BRACKETS_2025[inputs.filing];
@@ -10393,9 +10394,23 @@ function TaxEstimator({ profile, setProfile }) {
 
       <div className="layout">
         <aside className="col-inputs">
-          <section className="card">
-            <header className="card-head"><h2>Income & location</h2></header>
-            <div className="card-body stack">
+          <section className={"card" + (incomeOpen ? "" : " is-collapsed")}>
+            <header
+              className="card-head"
+              style={{ cursor: "pointer" }}
+              onClick={() => setIncomeOpen((v) => !v)}
+            >
+              <h2 style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span className={"debt-card-chevron" + (incomeOpen ? " is-open" : "")} style={{ pointerEvents: "none" }} aria-hidden="true">▾</span>
+                Income & location
+              </h2>
+              {!incomeOpen && (
+                <span className="card-tag">
+                  ${(inputs.salary || 0).toLocaleString()}/yr · {inputs.city || inputs.state}
+                </span>
+              )}
+            </header>
+            {incomeOpen && <div className="card-body stack">
               <Field label="Annual salary" hint="gross, pre-tax">
                 <Money value={inputs.salary} onChange={(v) => upd("salary", v)} placeholder="85,000" />
               </Field>
@@ -10435,7 +10450,7 @@ function TaxEstimator({ profile, setProfile }) {
                 label="FICA exempt"
                 hint="F-1 / J-1 non-resident students & scholars"
               />
-            </div>
+            </div>}
           </section>
         </aside>
 
