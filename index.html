@@ -10814,6 +10814,22 @@ function InvestingCalculator({ profile, getBudgetData }) {
   const overrideAnnual  = fundingMode === "custom" ? (customMonthly * 12) : undefined;
   const overrideMonthly = fundingMode === "custom" ? customMonthly        : undefined;
 
+  // Sum of all compound-mode investments' principles. This is the auto-derived
+  // monthly contribution that flows into those investments regardless of fundingMode.
+  const compoundMonthlyTotal = useMemoInvest(() => {
+    return portfolio.investments.reduce((sum, inv) => {
+      const m = migrateInvestment(inv);
+      return sum + (m.compound ? (Number(m.principle) || 0) : 0);
+    }, 0);
+  }, [portfolio.investments]);
+
+  // The TRUE total monthly investing amount = compound principles (always flowing)
+  // + non-compound budget (custom or budget-derived).
+  const nonCompoundBudget = fundingMode === "custom"
+    ? customMonthly
+    : (budget?.totals?.monthlyLeftover || 0);
+  const totalMonthlyInvested = compoundMonthlyTotal + nonCompoundBudget;
+
   const rows = useMemoInvest(
     () => computeInvestmentProjection(projYears, portfolio, overrideAnnual),
     [projYears, portfolio, overrideAnnual]
@@ -10885,11 +10901,36 @@ function InvestingCalculator({ profile, getBudgetData }) {
               {fundingMode === "custom" ? "Monthly amount you invest" : "Monthly amount (from Budget)"}
             </div>
             {fundingMode === "custom" ? (
-              <Money value={customMonthly} onChange={setCustomMonthly} placeholder="500" />
+              <>
+                <Money
+                  value={totalMonthlyInvested}
+                  onChange={(v) => {
+                    // The top input represents the TOTAL. The compound portion is fixed
+                    // by individual investment principles — anything above that is the
+                    // non-compound budget the user controls here.
+                    const nextNonCompound = Math.max(0, (Number(v) || 0) - compoundMonthlyTotal);
+                    setCustomMonthly(nextNonCompound);
+                  }}
+                  placeholder="500"
+                />
+                {compoundMonthlyTotal > 0 && (
+                  <div className="invest-top-readout-hint" style={{ marginTop: 6 }}>
+                    {fmtUSD0(compoundMonthlyTotal)} from compound investments
+                    {customMonthly > 0 && <> · {fmtUSD0(customMonthly)} extra to allocate</>}
+                  </div>
+                )}
+              </>
             ) : (
-              <div className="invest-top-readout">
-                {fmtUSD0(budget?.totals?.monthlyLeftover || 0)}<span className="invest-top-readout-sub">/mo</span>
-              </div>
+              <>
+                <div className="invest-top-readout">
+                  {fmtUSD0(totalMonthlyInvested)}<span className="invest-top-readout-sub">/mo</span>
+                </div>
+                {compoundMonthlyTotal > 0 && (
+                  <div className="invest-top-readout-hint" style={{ marginTop: 6 }}>
+                    {fmtUSD0(budget?.totals?.monthlyLeftover || 0)} budget surplus + {fmtUSD0(compoundMonthlyTotal)} compound
+                  </div>
+                )}
+              </>
             )}
           </div>
           <div className="invest-top-block">
