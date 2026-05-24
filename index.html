@@ -971,6 +971,73 @@ input, select { font: inherit; color: inherit; }
   opacity: 0.7;
 }
 
+/* Onboarding Account-choice phase — sign in / sign up / guest options */
+.onb-account-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.onb-account-options {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.onb-account-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 18px 22px;
+  border-radius: 12px;
+  border: 1.5px solid var(--border-2);
+  background: var(--surface);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  position: relative;
+  transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
+}
+.onb-account-option:hover {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);
+}
+.onb-account-option-subtle {
+  background: transparent;
+  border-style: dashed;
+}
+.onb-account-icon {
+  position: absolute;
+  top: 16px;
+  right: 18px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+}
+.onb-account-option-subtle .onb-account-icon {
+  background: var(--surface-2);
+  color: var(--ink-3);
+}
+.onb-account-option-title {
+  font-family: var(--display);
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--ink);
+}
+.onb-account-option-sub {
+  font-size: 13px;
+  color: var(--ink-3);
+  line-height: 1.4;
+}
+
 /* Shared-housing grouping (rent + utilities together) */
 .onb-shared-housing {
   background: var(--surface-2);
@@ -5243,9 +5310,24 @@ function AuthGate({ children }) {
   }, [user]);
 
   if (!user) {
+    // Brand new visitor (no auth + never onboarded) → let the wizard run as the
+    // entry experience. The wizard's AccountPhase handles sign-in/sign-up itself
+    // and writes the currentUser key, so on completion the gate flips automatically.
+    const onboarded = window.__rawStorage?.get?.("ledger:onboarded");
+    if (!onboarded && window.OnboardingWizard) {
+      return <window.OnboardingWizard onClose={() => {
+        // After the wizard saves the account + clicks "Open my dashboard"
+        const em = getCurrentUser();
+        if (em) {
+          const map = loadAccounts();
+          setUser(em === "_guest" ? { email: "_guest", name: "Guest" } : { email: em, ...map[em] });
+          setTimeout(() => window.location.reload(), 100);
+        }
+      }} />;
+    }
+    // Returning visitor who signed out → traditional login screen
     return <LoginScreen onLoggedIn={(email, account) => {
       setUser({ email, ...account });
-      // Reload so every component re-reads from the freshly namespaced localStorage
       setTimeout(() => window.location.reload(), 100);
     }} />;
   }
@@ -13012,7 +13094,163 @@ function WelcomePhase({ next }) {
   );
 }
 
-// ─── Phase 2: Income ───────────────────────────────────────────────────
+// ─── Phase 2: Account (sign in / sign up / guest) ─────────────────────
+function AccountPhase({ data, setData, next }) {
+  const [mode, setMode] = useStateOnb(data.account?.mode || "choice"); // choice | signin | signup | guest
+  const [email, setEmail] = useStateOnb(data.account?.email || "");
+  const [firstName, setFirstName] = useStateOnb(data.account?.firstName || "");
+  const [lastName, setLastName] = useStateOnb(data.account?.lastName || "");
+  const [password, setPassword] = useStateOnb("");
+  const [error, setError] = useStateOnb("");
+  const [busy, setBusy] = useStateOnb(false);
+
+  const existingAccounts = (() => {
+    try { return JSON.parse(window.__rawStorage?.get?.("ledger:auth:accounts") || "{}"); }
+    catch { return {}; }
+  })();
+  const hasExisting = Object.keys(existingAccounts).length > 0;
+
+  const updAccount = (patch) => setData((d) => ({ ...d, account: { ...d.account, ...patch } }));
+
+  const submit = async () => {
+    setError("");
+    const cleanEmail = email.trim().toLowerCase();
+    if (mode !== "guest" && (!cleanEmail || !cleanEmail.includes("@"))) {
+      setError("Enter a valid email."); return;
+    }
+    setBusy(true);
+    try {
+      // Hash password (SHA-256 via auth.jsx's helper, replicated here for safety)
+      const enc = new TextEncoder().encode(password || "");
+      const buf = await crypto.subtle.digest("SHA-256", enc);
+      const hash = Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
+      const map = JSON.parse(window.__rawStorage.get("ledger:auth:accounts") || "{}");
+
+      if (mode === "signup") {
+        if (map[cleanEmail]) { setError("That email is already registered. Sign in instead."); setBusy(false); return; }
+        const displayName = `${firstName.trim()} ${lastName.trim()}`.trim() || cleanEmail.split("@")[0];
+        map[cleanEmail] = {
+          firstName: firstName.trim(), lastName: lastName.trim(), name: displayName,
+          passHash: hash, createdAt: new Date().toISOString(), lastSignIn: new Date().toISOString(),
+        };
+        window.__rawStorage.set("ledger:auth:accounts", JSON.stringify(map));
+        window.__rawStorage.set("ledger:auth:currentUser", cleanEmail);
+        updAccount({ email: cleanEmail, firstName, lastName, mode: "signup" });
+      } else if (mode === "signin") {
+        const account = map[cleanEmail];
+        if (!account) { setError("No account with that email on this browser."); setBusy(false); return; }
+        if (account.passHash !== hash) { setError("Wrong password."); setBusy(false); return; }
+        account.lastSignIn = new Date().toISOString();
+        map[cleanEmail] = account;
+        window.__rawStorage.set("ledger:auth:accounts", JSON.stringify(map));
+        window.__rawStorage.set("ledger:auth:currentUser", cleanEmail);
+        updAccount({ email: cleanEmail, firstName: account.firstName, lastName: account.lastName, mode: "signin" });
+      } else if (mode === "guest") {
+        window.__rawStorage.set("ledger:auth:currentUser", "_guest");
+        updAccount({ email: "_guest", firstName: "Guest", lastName: "", mode: "guest" });
+      }
+      setBusy(false);
+      next();
+    } catch (e) {
+      setError("Something went wrong: " + (e.message || "unknown"));
+      setBusy(false);
+    }
+  };
+
+  // Step 1 — choice screen
+  if (mode === "choice") {
+    return (
+      <div className="onb-account-choice">
+        <p className="expense-section-hint" style={{ textAlign: "center", marginTop: 0 }}>
+          Your data will be saved under your account so you can come back to it anytime.
+        </p>
+        <div className="onb-account-options">
+          <button className="onb-account-option" onClick={() => setMode(hasExisting ? "signin" : "signup")}>
+            <div className="onb-account-icon">✦</div>
+            <div className="onb-account-option-title">{hasExisting ? "Sign in" : "Create an account"}</div>
+            <div className="onb-account-option-sub">
+              {hasExisting ? "You already have an account on this browser" : "Save your finances with email + password"}
+            </div>
+          </button>
+          {hasExisting && (
+            <button className="onb-account-option" onClick={() => setMode("signup")}>
+              <div className="onb-account-icon">+</div>
+              <div className="onb-account-option-title">Create a new account</div>
+              <div className="onb-account-option-sub">For a different person on this browser</div>
+            </button>
+          )}
+          <button className="onb-account-option onb-account-option-subtle" onClick={() => setMode("guest")}>
+            <div className="onb-account-icon">👤</div>
+            <div className="onb-account-option-title">Continue as guest</div>
+            <div className="onb-account-option-sub">No account — data is still saved on this device only</div>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Step 2 — form for chosen mode
+  if (mode === "guest") {
+    // No form needed — just confirm and continue
+    return (
+      <div className="onb-form" style={{ alignItems: "center" }}>
+        <div style={{ textAlign: "center", padding: "20px 0" }}>
+          <div className="onb-account-icon" style={{ margin: "0 auto 16px", width: 56, height: 56, fontSize: 28 }}>👤</div>
+          <p style={{ color: "var(--ink-2)", maxWidth: 360, margin: "0 auto 20px" }}>
+            Continue as guest — your data is saved in this browser only.
+            Use the My data button later to back up or restore.
+          </p>
+          <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+            <button className="btn-ghost" onClick={() => setMode("choice")}>← Back</button>
+            <button className="btn-primary" onClick={submit} disabled={busy}>
+              {busy ? "..." : "Continue →"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="onb-form">
+      <button type="button" className="btn-link" onClick={() => setMode("choice")} style={{ alignSelf: "flex-start" }}>
+        ← Back
+      </button>
+      {mode === "signup" && (
+        <div className="login-name-row">
+          <Field label="First name">
+            <input type="text" className="text-input" value={firstName}
+              onChange={(e) => setFirstName(e.target.value)} placeholder="Nischal" />
+          </Field>
+          <Field label="Last name">
+            <input type="text" className="text-input" value={lastName}
+              onChange={(e) => setLastName(e.target.value)} placeholder="Sunar" />
+          </Field>
+        </div>
+      )}
+      <Field label="Email">
+        <input type="email" className="text-input" value={email}
+          onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
+      </Field>
+      <Field label="Password">
+        <input type="password" className="text-input" value={password}
+          onChange={(e) => setPassword(e.target.value)} placeholder="••••••••"
+          onKeyDown={(e) => e.key === "Enter" && submit()} />
+      </Field>
+      {error && <div className="login-error">{error}</div>}
+      <button className="btn-primary" onClick={submit} disabled={busy} style={{ marginTop: 4 }}>
+        {busy ? "..." : (mode === "signin" ? "Sign in →" : "Create account →")}
+      </button>
+      <div style={{ textAlign: "center", fontSize: 12, color: "var(--ink-3)", marginTop: 4 }}>
+        {mode === "signin"
+          ? <>No account? <button type="button" className="btn-link" onClick={() => setMode("signup")}>Create one</button></>
+          : <>Already have one? <button type="button" className="btn-link" onClick={() => setMode("signin")}>Sign in</button></>}
+      </div>
+    </div>
+  );
+}
+
+// ─── Phase 3: Income ───────────────────────────────────────────────────
 function IncomePhase({ data, setData }) {
   const inc = data.income;
   const upd = (k, v) => setData((d) => ({ ...d, income: { ...d.income, [k]: v } }));
@@ -13595,6 +13833,7 @@ function FinishPhase({ data, finish }) {
 function OnboardingWizard({ onClose }) {
   const [phase, setPhase] = useStateOnb(0);
   const [data, setData] = useStateOnb({
+    account: null, // { email, firstName, lastName, mode } — set in AccountPhase
     income: { salary: 65000, bonus: 0, additionalIncome: 0, additionalIncomeLabel: "", filing: "single", state: "NY", city: "", ficaExempt: false },
     vehicle: { has: null, type: "sedan", financing: "loan", insurance: 130, milesPerDay: 0, mpg: 30, gasPrice: 3.5, workdaysPerMonth: 22, price: 28000 },
     expenses: { rent: 1500, groceries: 500, utilities: 200, misc: 0, subscriptions: [], secondary: [] },
@@ -13604,6 +13843,7 @@ function OnboardingWizard({ onClose }) {
 
   const phases = [
     { title: "Welcome",          render: (p) => <WelcomePhase       {...p} /> },
+    { title: "Your account",     render: (p) => <AccountPhase       {...p} /> },
     { title: "Your income",      render: (p) => <IncomePhase        {...p} /> },
     { title: "Your vehicle",     render: (p) => <VehiclePhase       {...p} /> },
     { title: "Monthly expenses", render: (p) => <ExpensesPhase      {...p} /> },
