@@ -10200,7 +10200,7 @@ function HouseholdCalculator({ profile, getBudgetData }) {
   const [household, setHousehold] = useStateHH(() => buildDefaultHousehold(profile));
   const [view, setView] = useStateHH("monthly");
   // Re-read Budget data periodically so the "Me" member stays live-synced
-  const [, setTickHH] = useStateHH(0);
+  const [tickHH, setTickHH] = useStateHH(0);
   useEffectHH(() => {
     const id = setInterval(() => setTickHH((t) => t + 1), 1500);
     return () => clearInterval(id);
@@ -10227,6 +10227,16 @@ function HouseholdCalculator({ profile, getBudgetData }) {
   // Live-sync the "Me" member's profile + personal expenses from the Budget tab.
   // Income: salary + bonus + additionalIncome. Personal expenses: carIns + gas +
   // otherLoan + (secondary + subscriptions rolled up as "personal" discretionary).
+  // Read live debt minimums directly so Household's "Other loan" always matches
+  // the Debt tab — no intermediate sync click needed on the Budget tab.
+  const debtMinLive = useMemoHH(() => {
+    try {
+      const debt = JSON.parse(localStorage.getItem("ledger:debt") || "null");
+      return (debt?.debts || []).reduce((a, d) => a + (Number(d.minPayment) || 0), 0);
+    } catch { return 0; }
+  // Recompute every tick to catch debt-tab edits
+  }, [tickHH]);
+
   useEffectHH(() => {
     setHousehold((h) => {
       if (!h.members.length) return h;
@@ -10235,6 +10245,9 @@ function HouseholdCalculator({ profile, getBudgetData }) {
       const secondaryTotal = (budgetExpenses?.secondary || []).reduce((a, it) => a + (Number(it.amount) || 0), 0);
       const subsTotal      = (budgetExpenses?.subscriptions || []).reduce((a, it) => a + (Number(it.amount) || 0), 0);
       const personalDiscretionary = Math.round(secondaryTotal + subsTotal);
+      // For otherLoan: prefer live debt minimums (the truest source). Fall back to
+      // Budget's value only if user has actively typed a non-default override.
+      const otherLoanFromDebt = debtMinLive > 0 ? Math.round(debtMinLive) : (budgetExpenses?.otherLoan ?? me.personalExpenses.otherLoan);
       const next = {
         ...me,
         salary: profile.salary,
@@ -10249,7 +10262,7 @@ function HouseholdCalculator({ profile, getBudgetData }) {
           ...me.personalExpenses,
           carIns:    budgetExpenses?.carIns    ?? me.personalExpenses.carIns,
           gas:       budgetExpenses?.gas       ?? me.personalExpenses.gas,
-          otherLoan: budgetExpenses?.otherLoan ?? me.personalExpenses.otherLoan,
+          otherLoan: otherLoanFromDebt,
           personal:  budgetExpenses ? personalDiscretionary : me.personalExpenses.personal,
         },
       };
@@ -10265,6 +10278,7 @@ function HouseholdCalculator({ profile, getBudgetData }) {
     profile.salary, profile.bonus, profile.additionalIncome, profile.additionalIncomeLabel,
     profile.filing, profile.state, profile.city, profile.ficaExempt,
     budgetExpenses?.carIns, budgetExpenses?.gas, budgetExpenses?.otherLoan,
+    debtMinLive,
     JSON.stringify(budgetExpenses?.secondary || []),
     JSON.stringify(budgetExpenses?.subscriptions || []),
   ]);
