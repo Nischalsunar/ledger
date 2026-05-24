@@ -8185,10 +8185,21 @@ function buildProjectionYears(inputs, expenses, growth, yearCount) {
 }
 
 function Projection({ years, yearCount, isMonthly, monthRows, max, growth, onYearsChange, onViewChange }) {
+  // Whole-section expand/collapse (UI only, not persisted)
+  const [open, setOpen] = useStateBudget(true);
   return (
-    <section className="card">
-      <header className="card-head">
-        <h2>
+    <section className={"card" + (open ? "" : " is-collapsed")}>
+      <header
+        className="card-head"
+        style={{ cursor: "pointer" }}
+        onClick={(e) => { if (e.target.closest("button, .card-tag-link")) return; setOpen((v) => !v); }}
+      >
+        <h2 style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span
+            className={"debt-card-chevron" + (open ? " is-open" : "")}
+            style={{ pointerEvents: "none" }}
+            aria-hidden="true"
+          >▾</span>
           Next {yearCount} year{yearCount !== 1 ? "s" : ""}
           <span className="card-tag-inline">({isMonthly ? "monthly" : "annual"})</span>
           {isMonthly && monthRows.length > 0 && (
@@ -8199,7 +8210,8 @@ function Projection({ years, yearCount, isMonthly, monthRows, max, growth, onYea
         </h2>
         <span
           className="card-tag card-tag-link"
-          onClick={() => {
+          onClick={(e) => {
+            e.stopPropagation();
             const el = document.getElementById("growth-assumptions");
             if (!el) return;
             const top = el.getBoundingClientRect().top + window.scrollY - 24;
@@ -8213,6 +8225,7 @@ function Projection({ years, yearCount, isMonthly, monthRows, max, growth, onYea
           <span className="card-tag-arrow">→</span>
         </span>
       </header>
+      {open && <>
       <div className="projection-controls">
         <div className="projection-controls-group">
           <span className="projection-controls-label">Project for</span>
@@ -8327,6 +8340,7 @@ function Projection({ years, yearCount, isMonthly, monthRows, max, growth, onYea
           </tbody>
         </table>
       </div>
+      </>}
     </section>
   );
 }
