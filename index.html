@@ -5294,6 +5294,20 @@ html[data-color-mode="light"] .date-input { color-scheme: light; }
   margin-top: 4px;
 }
 
+/* ===== Onboarding: Google sign-in option highlight ===== */
+.onb-account-option-google {
+  border-color: var(--accent-dim) !important;
+  background: linear-gradient(180deg, var(--accent-bg), var(--surface));
+}
+.onb-account-option-google:hover {
+  border-color: var(--accent) !important;
+  background: linear-gradient(180deg, var(--accent-bg), var(--surface-2));
+}
+.onb-account-option-google:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
 /* ===== Track-in-Overview toggle (pill switch) ===== */
 .track-toggle {
   display: inline-flex;
@@ -15704,6 +15718,77 @@ function AccountPhase({ data, setData, next, finish }) {
 
   const updAccount = (patch) => setData((d) => ({ ...d, account: { ...d.account, ...patch } }));
 
+  // ─── Continue with Google ────────────────────────────────────────────
+  // Same Firebase Auth flow used on the LoginScreen, just wired into the
+  // onboarding wizard so first-run users can sign in with Gmail instead of
+  // typing email + password.
+  const continueWithGoogle = async () => {
+    setError("");
+    const sync = window.__firebaseSync;
+    if (!sync || !sync.enabled) {
+      setError("Google sign-in needs an internet connection. Check your network and try again.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const cred = await sync.signInGoogle();
+      const u = cred.user;
+      const cleanEmail = (u.email || "").toLowerCase();
+      const displayName = u.displayName || cleanEmail.split("@")[0];
+      const [first, ...rest] = displayName.split(" ");
+
+      // Mirror the LoginScreen flow — write a local-account shadow + currentUser,
+      // then optionally hydrate from Firestore and skip the wizard if onboarded.
+      const map = JSON.parse(window.__rawStorage.get("ledger:auth:accounts") || "{}");
+      const existing = map[cleanEmail] || {};
+      map[cleanEmail] = {
+        ...existing,
+        firstName: existing.firstName || first || "",
+        lastName:  existing.lastName  || rest.join(" ") || "",
+        name:      displayName,
+        role:      window.__isAdminEmail?.(cleanEmail) ? "admin" : "user",
+        createdAt: existing.createdAt || new Date().toISOString(),
+        lastSignIn: new Date().toISOString(),
+        cloudUid:  u.uid,
+        provider:  "google",
+      };
+      window.__rawStorage.set("ledger:auth:accounts", JSON.stringify(map));
+      window.__rawStorage.set("ledger:auth:currentUser", cleanEmail);
+
+      // Push profile to Firestore so the admin tab and other devices see this user.
+      try {
+        await sync.writeProfile?.(u.uid, {
+          email: cleanEmail, name: displayName,
+          firstName: map[cleanEmail].firstName, lastName: map[cleanEmail].lastName,
+          role: map[cleanEmail].role, provider: "google",
+          createdAt: map[cleanEmail].createdAt,
+          lastSignIn: map[cleanEmail].lastSignIn,
+          photoURL: u.photoURL || null,
+        });
+        await window.__hydrateFromFirestore?.(u.uid, cleanEmail);
+      } catch (e) {
+        // Hydration failure shouldn't block sign-in — local data still works
+        console.warn("[onboarding] Google sign-in: cloud sync skipped:", e.message);
+      }
+
+      updAccount({ email: cleanEmail, firstName: map[cleanEmail].firstName, lastName: map[cleanEmail].lastName, mode: "google" });
+
+      // If this Google account already finished onboarding on another device,
+      // jump straight to the dashboard.
+      const alreadyOnboarded = !!window.__rawStorage?.get?.(`ledger:u:${cleanEmail}:onboarded`);
+      if (alreadyOnboarded) {
+        window.__rawStorage.set("ledger:onboarded", "1");
+        window.location.reload();
+        return;
+      }
+      setBusy(false);
+      next();
+    } catch (e) {
+      setError("Google sign-in failed: " + (e.code || e.message || "unknown"));
+      setBusy(false);
+    }
+  };
+
   const submit = async () => {
     setError("");
     const cleanEmail = email.trim().toLowerCase();
@@ -15773,6 +15858,25 @@ function AccountPhase({ data, setData, next, finish }) {
           Use <strong>any email</strong> — Gmail, Outlook, work email, whatever you prefer.
         </p>
         <div className="onb-account-options">
+          {/* Google sign-in — most prominent option since it's the lowest-friction path
+              and gives the user cross-device sync automatically. */}
+          <button
+            className="onb-account-option onb-account-option-google"
+            onClick={continueWithGoogle}
+            disabled={busy}
+          >
+            <div className="onb-account-icon" style={{ background: "#fff", padding: 6 }}>
+              <svg width="28" height="28" viewBox="0 0 48 48" aria-hidden="true">
+                <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3c-1.6 4.7-6.1 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.8 1.1 7.9 3l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20c11 0 19.7-8 19.7-20 0-1.3-.1-2.3-.4-3.5z"/>
+                <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 16 19 13 24 13c3 0 5.8 1.1 7.9 3l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/>
+                <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.6 39.6 16.3 44 24 44z"/>
+                <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.3-4.1 5.6l6.2 5.2C41.3 35.2 44 30 44 24c0-1.3-.1-2.3-.4-3.5z"/>
+              </svg>
+            </div>
+            <div className="onb-account-option-title">{busy ? "Signing in…" : "Continue with Google"}</div>
+            <div className="onb-account-option-sub">Use your Gmail account — auto-syncs across devices</div>
+          </button>
+
           {/* Sign in is always shown — if user already has an account, they jump to it */}
           <button className="onb-account-option" onClick={() => setMode("signin")}>
             <div className="onb-account-icon">→</div>
@@ -15794,6 +15898,10 @@ function AccountPhase({ data, setData, next, finish }) {
             <div className="onb-account-option-sub">No account — data is still saved on this device only</div>
           </button>
         </div>
+
+        {error && (
+          <div className="login-error" style={{ marginTop: 14, textAlign: "center" }}>{error}</div>
+        )}
       </div>
     );
   }
