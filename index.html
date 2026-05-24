@@ -12526,16 +12526,25 @@ function OverviewCalculator({ profile, getBudgetData }) {
     const gasBudget    = expenses.gas || 0;
     const otherLoan    = expenses.otherLoan || 0;
 
+    // Consolidate the previously-confusing debt rows:
+    // - Budget "Other loan" + Debt tab "minimums" used to show as TWO separate lines
+    //   even though the otherLoan field is meant to be synced from the Debt tab.
+    // - Now: if Debt tab has tracked debts, use that single source.
+    //        Otherwise, fall back to Budget's otherLoan.
+    // This eliminates the double-counting and the confusing 3-debt-row layout.
+    const hasTrackedDebts = (debt.debts || []).length > 0;
+    const debtMinimums = hasTrackedDebts ? debtTotal : otherLoan;
+
     // Build categories with explicit segments
     const categories = [
       { label: "Tax",              value: monthlyTax,      color: "#D77662", group: "Out" },
       { label: "Rent / housing",   value: rent,            color: "#5A8FA3", group: "Out" },
       { label: "Living expenses",  value: otherMonthly,    color: "#7B6E55", group: "Out" },
       { label: "Vehicle costs",    value: autoMonthly || (carInsBudget + gasBudget), color: "#C9A96E", group: "Out" },
-      { label: "Debt minimums",    value: debtTotal,       color: "#9C7C4B", group: "Out" },
-      { label: "Other loans",      value: otherLoan,       color: "#A07ABE", group: "Out" },
-      { label: "Extra debt paydown", value: extraToDebt,   color: "#8B5A3C", group: "Save" },
-      { label: "Savings & investing", value: savingsTarget, color: "#4DA77A", group: "Save" },
+      { label: "Debt minimums",    value: debtMinimums,    color: "#9C7C4B", group: "Out",
+        from: hasTrackedDebts ? "DEBT" : "BUDGET" },
+      { label: "Extra debt paydown", value: extraToDebt,   color: "#8B5A3C", group: "Save", from: "DEBT" },
+      { label: "Going to savings", value: savingsTarget,   color: "#4DA77A", group: "Save", from: "SAVINGS" },
     ].filter((c) => c.value > 0);
 
     // True outflows = everything in the "Out" group (real bills, taxes, debt minimums).
@@ -12720,30 +12729,37 @@ function OverviewCalculator({ profile, getBudgetData }) {
                   <td className="num neg">{fmtUSD0(data.autoMonthly * mult)}</td>
                   <td className="num">{fmtPct(data.autoMonthly / data.monthlyTakeHome, 1)}</td>
                 </tr>
-                <tr>
-                  <td className="row-source">Budget</td>
-                  <td>Other loan payments</td>
-                  <td className="num neg">{fmtUSD0((data.expenses.otherLoan || 0) * mult)}</td>
-                  <td className="num">{fmtPct((data.expenses.otherLoan || 0) / data.monthlyTakeHome, 1)}</td>
-                </tr>
-                <tr>
-                  <td className="row-source">Debt</td>
-                  <td>Tracked debt minimums</td>
-                  <td className="num neg">{fmtUSD0(data.debtTotal * mult)}</td>
-                  <td className="num">{fmtPct(data.debtTotal / data.monthlyTakeHome, 1)}</td>
-                </tr>
-                <tr>
-                  <td className="row-source">Debt</td>
-                  <td>Extra debt paydown</td>
-                  <td className="num">{fmtUSD0(data.extraToDebt * mult)}</td>
-                  <td className="num">{fmtPct(data.extraToDebt / data.monthlyTakeHome, 1)}</td>
-                </tr>
-                <tr>
-                  <td className="row-source">Debt / Invest</td>
-                  <td>Going to savings</td>
-                  <td className="num pos">{fmtUSD0(data.savingsTarget * mult)}</td>
-                  <td className="num">{fmtPct(data.savingsTarget / data.monthlyTakeHome, 1)}</td>
-                </tr>
+                {/* Single consolidated debt line — uses Debt tab data if tracked, else Budget's otherLoan.
+                    No more duplicate "Other loan + Tracked minimums" double-counting. */}
+                {(() => {
+                  const hasTracked = (data.debt?.debts || []).length > 0;
+                  const minVal = hasTracked ? data.debtTotal : (data.expenses.otherLoan || 0);
+                  if (minVal === 0) return null;
+                  return (
+                    <tr>
+                      <td className="row-source">{hasTracked ? "Debt" : "Budget"}</td>
+                      <td>Loan / debt minimums {hasTracked && <span className="row-hint" style={{display:"inline",marginLeft:6,fontSize:11}}>(from Debt tab)</span>}</td>
+                      <td className="num neg">{fmtUSD0(minVal * mult)}</td>
+                      <td className="num">{fmtPct(minVal / data.monthlyTakeHome, 1)}</td>
+                    </tr>
+                  );
+                })()}
+                {data.extraToDebt > 0 && (
+                  <tr>
+                    <td className="row-source">Debt</td>
+                    <td>Extra debt paydown <span className="row-hint" style={{display:"inline",marginLeft:6,fontSize:11}}>(above minimums)</span></td>
+                    <td className="num">{fmtUSD0(data.extraToDebt * mult)}</td>
+                    <td className="num">{fmtPct(data.extraToDebt / data.monthlyTakeHome, 1)}</td>
+                  </tr>
+                )}
+                {data.savingsTarget > 0 && (
+                  <tr>
+                    <td className="row-source">Savings</td>
+                    <td>Going to savings &amp; investing</td>
+                    <td className="num pos">{fmtUSD0(data.savingsTarget * mult)}</td>
+                    <td className="num">{fmtPct(data.savingsTarget / data.monthlyTakeHome, 1)}</td>
+                  </tr>
+                )}
                 <tr className="ptable-year-start">
                   <td className="row-source">Total</td>
                   <td><strong>Tracked outflow</strong></td>
