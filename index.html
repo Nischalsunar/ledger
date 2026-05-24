@@ -14763,113 +14763,7 @@ function OverviewCalculator({ profile, getBudgetData }) {
           </div>
         </section>
 
-        <section className="card">
-          <header className="card-head">
-            <h2>Full breakdown by source</h2>
-          </header>
-          <div className="card-body" style={{ overflowX: "auto" }}>
-            <table className="ptable" style={{ minWidth: 500 }}>
-              <thead>
-                <tr>
-                  <th>From</th>
-                  <th>Line item</th>
-                  <th className="num">{view === "monthly" ? "Per month" : "Per year"}</th>
-                  <th className="num">% of take-home</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td className="row-source">Income</td>
-                  <td>Gross salary{profile?.bonus ? " + bonus" : ""}</td>
-                  <td className="num">{fmtUSD0((data.tax?.gross || 0) * mult / 12)}</td>
-                  <td className="num">—</td>
-                </tr>
-                <tr>
-                  <td className="row-source">Tax</td>
-                  <td>Federal + state + FICA</td>
-                  <td className="num neg">{fmtUSD0(data.monthlyTax * mult)}</td>
-                  <td className="num">{fmtPct(data.monthlyTax / data.monthlyTakeHome, 1)}</td>
-                </tr>
-                <tr className="ptable-year-start">
-                  <td className="row-source">Take-home</td>
-                  <td><strong>Net pay</strong></td>
-                  <td className="num"><strong>{fmtUSD0(data.monthlyTakeHome * mult)}</strong></td>
-                  <td className="num">100%</td>
-                </tr>
-                <tr>
-                  <td className="row-source">Budget</td>
-                  <td>Rent / housing{(Number(data.expenses.rentSplit) || 1) > 1 ? ` (${data.expenses.rentSplit}-way split)` : ""}</td>
-                  <td className="num neg">{fmtUSD0((window.expenseShare ? window.expenseShare(data.expenses, "rent") : (data.expenses.rent || 0)) * mult)}</td>
-                  <td className="num">{fmtPct((window.expenseShare ? window.expenseShare(data.expenses, "rent") : (data.expenses.rent || 0)) / data.monthlyTakeHome, 1)}</td>
-                </tr>
-                <tr>
-                  <td className="row-source">Budget</td>
-                  <td>Groceries + utilities{(Number(data.expenses.utilitiesSplit) || 1) > 1 ? ` (utilities ${data.expenses.utilitiesSplit}-way)` : ""}</td>
-                  {(() => {
-                    const g = data.expenses.groceries != null ? (Number(data.expenses.groceries) || 0) : (Number(data.expenses.expenses) || 0);
-                    const u = window.expenseShare ? window.expenseShare(data.expenses, "utilities") : (Number(data.expenses.utilities) || 0);
-                    const total = g + u;
-                    return (<>
-                      <td className="num neg">{fmtUSD0(total * mult)}</td>
-                      <td className="num">{fmtPct(total / data.monthlyTakeHome, 1)}</td>
-                    </>);
-                  })()}
-                </tr>
-                <tr>
-                  <td className="row-source">Auto</td>
-                  <td>Vehicle (loan + insurance + gas + upkeep)</td>
-                  <td className="num neg">{fmtUSD0(data.autoMonthly * mult)}</td>
-                  <td className="num">{fmtPct(data.autoMonthly / data.monthlyTakeHome, 1)}</td>
-                </tr>
-                {/* Single consolidated debt line — uses Debt tab data if tracked, else Budget's otherLoan.
-                    No more duplicate "Other loan + Tracked minimums" double-counting. */}
-                {(() => {
-                  const hasTracked = (data.debt?.debts || []).length > 0;
-                  const minVal = hasTracked ? data.debtTotal : (data.expenses.otherLoan || 0);
-                  if (minVal === 0) return null;
-                  return (
-                    <tr>
-                      <td className="row-source">{hasTracked ? "Debt" : "Budget"}</td>
-                      <td>Loan / debt minimums {hasTracked && <span className="row-hint" style={{display:"inline",marginLeft:6,fontSize:11}}>(from Debt tab)</span>}</td>
-                      <td className="num neg">{fmtUSD0(minVal * mult)}</td>
-                      <td className="num">{fmtPct(minVal / data.monthlyTakeHome, 1)}</td>
-                    </tr>
-                  );
-                })()}
-                {data.extraToDebt > 0 && (
-                  <tr>
-                    <td className="row-source">Debt</td>
-                    <td>Extra debt paydown <span className="row-hint" style={{display:"inline",marginLeft:6,fontSize:11}}>(above minimums)</span></td>
-                    <td className="num">{fmtUSD0(data.extraToDebt * mult)}</td>
-                    <td className="num">{fmtPct(data.extraToDebt / data.monthlyTakeHome, 1)}</td>
-                  </tr>
-                )}
-                {data.savingsTarget > 0 && (
-                  <tr>
-                    <td className="row-source">Savings</td>
-                    <td>Going to savings &amp; investing</td>
-                    <td className="num pos">{fmtUSD0(data.savingsTarget * mult)}</td>
-                    <td className="num">{fmtPct(data.savingsTarget / data.monthlyTakeHome, 1)}</td>
-                  </tr>
-                )}
-                <tr className="ptable-year-start">
-                  <td className="row-source">Total</td>
-                  <td><strong>Tracked outflow</strong></td>
-                  <td className="num neg"><strong>{fmtUSD0(data.totalOut * mult)}</strong></td>
-                  <td className="num"><strong>{fmtPct(data.totalOut / data.monthlyTakeHome, 1)}</strong></td>
-                </tr>
-                <tr className={data.leftover >= 0 ? "" : ""}>
-                  <td className="row-source">Leftover</td>
-                  <td><strong>{data.leftover >= 0 ? "Discretionary / untracked" : "Shortfall"}</strong></td>
-                  <td className={"num " + (data.leftover >= 0 ? "pos" : "neg")}>
-                    <strong>{data.leftover >= 0 ? "+" : ""}{fmtUSD0(data.leftover * mult)}</strong>
-                  </td>
-                  <td className="num">{fmtPct(data.leftover / data.monthlyTakeHome, 1)}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
+        <FullBreakdownBySource data={data} view={view} mult={mult} profile={profile} />
 
         <div className="grid-2">
           <section className="card">
@@ -15079,6 +14973,136 @@ function OptimizePanel({ data, view, mult }) {
           </li>
         ))}
       </ul>
+    </section>
+  );
+}
+
+// ─── Full breakdown by source (collapsible) ──────────────────────────────
+// Lists every line of where money goes, tagged by which calculator tab it
+// comes from. Extra debt paydown renders RED because — even though it's
+// "your" money — it's still outflow leaving your liquid funds toward debt,
+// not building net spendable cash.
+function FullBreakdownBySource({ data, view, mult, profile }) {
+  const [open, setOpen] = useStateOv(true);
+  return (
+    <section className={"card" + (open ? "" : " is-collapsed")}>
+      <header
+        className="card-head"
+        style={{ cursor: "pointer" }}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <h2 style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span className={"debt-card-chevron" + (open ? " is-open" : "")} style={{ pointerEvents: "none" }} aria-hidden="true">▾</span>
+          Full breakdown by source
+        </h2>
+        {!open && (
+          <span className="card-tag">
+            {fmtUSD0(data.totalOut * mult)} {view === "monthly" ? "/mo" : "/yr"} tracked
+          </span>
+        )}
+      </header>
+      {open && <div className="card-body" style={{ overflowX: "auto" }}>
+        <table className="ptable" style={{ minWidth: 500 }}>
+          <thead>
+            <tr>
+              <th>From</th>
+              <th>Line item</th>
+              <th className="num">{view === "monthly" ? "Per month" : "Per year"}</th>
+              <th className="num">% of take-home</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td className="row-source">Income</td>
+              <td>Gross salary{profile?.bonus ? " + bonus" : ""}</td>
+              <td className="num">{fmtUSD0((data.tax?.gross || 0) * mult / 12)}</td>
+              <td className="num">—</td>
+            </tr>
+            <tr>
+              <td className="row-source">Tax</td>
+              <td>Federal + state + FICA</td>
+              <td className="num neg">{fmtUSD0(data.monthlyTax * mult)}</td>
+              <td className="num">{fmtPct(data.monthlyTax / data.monthlyTakeHome, 1)}</td>
+            </tr>
+            <tr className="ptable-year-start">
+              <td className="row-source">Take-home</td>
+              <td><strong>Net pay</strong></td>
+              <td className="num"><strong>{fmtUSD0(data.monthlyTakeHome * mult)}</strong></td>
+              <td className="num">100%</td>
+            </tr>
+            <tr>
+              <td className="row-source">Budget</td>
+              <td>Rent / housing{(Number(data.expenses.rentSplit) || 1) > 1 ? ` (${data.expenses.rentSplit}-way split)` : ""}</td>
+              <td className="num neg">{fmtUSD0((window.expenseShare ? window.expenseShare(data.expenses, "rent") : (data.expenses.rent || 0)) * mult)}</td>
+              <td className="num">{fmtPct((window.expenseShare ? window.expenseShare(data.expenses, "rent") : (data.expenses.rent || 0)) / data.monthlyTakeHome, 1)}</td>
+            </tr>
+            <tr>
+              <td className="row-source">Budget</td>
+              <td>Groceries + utilities{(Number(data.expenses.utilitiesSplit) || 1) > 1 ? ` (utilities ${data.expenses.utilitiesSplit}-way)` : ""}</td>
+              {(() => {
+                const g = data.expenses.groceries != null ? (Number(data.expenses.groceries) || 0) : (Number(data.expenses.expenses) || 0);
+                const u = window.expenseShare ? window.expenseShare(data.expenses, "utilities") : (Number(data.expenses.utilities) || 0);
+                const total = g + u;
+                return (<>
+                  <td className="num neg">{fmtUSD0(total * mult)}</td>
+                  <td className="num">{fmtPct(total / data.monthlyTakeHome, 1)}</td>
+                </>);
+              })()}
+            </tr>
+            <tr>
+              <td className="row-source">Auto</td>
+              <td>Vehicle (loan + insurance + gas + upkeep)</td>
+              <td className="num neg">{fmtUSD0(data.autoMonthly * mult)}</td>
+              <td className="num">{fmtPct(data.autoMonthly / data.monthlyTakeHome, 1)}</td>
+            </tr>
+            {/* Single consolidated debt minimums line */}
+            {(() => {
+              const hasTracked = (data.debt?.debts || []).length > 0;
+              const minVal = hasTracked ? data.debtTotal : (data.expenses.otherLoan || 0);
+              if (minVal === 0) return null;
+              return (
+                <tr>
+                  <td className="row-source">{hasTracked ? "Debt" : "Budget"}</td>
+                  <td>Loan / debt minimums {hasTracked && <span className="row-hint" style={{display:"inline",marginLeft:6,fontSize:11}}>(from Debt tab)</span>}</td>
+                  <td className="num neg">{fmtUSD0(minVal * mult)}</td>
+                  <td className="num">{fmtPct(minVal / data.monthlyTakeHome, 1)}</td>
+                </tr>
+              );
+            })()}
+            {/* Extra debt paydown — RED because it's still outflow toward debt */}
+            {data.extraToDebt > 0 && (
+              <tr>
+                <td className="row-source">Debt</td>
+                <td>Extra debt paydown <span className="row-hint" style={{display:"inline",marginLeft:6,fontSize:11}}>(above minimums)</span></td>
+                <td className="num neg">{fmtUSD0(data.extraToDebt * mult)}</td>
+                <td className="num">{fmtPct(data.extraToDebt / data.monthlyTakeHome, 1)}</td>
+              </tr>
+            )}
+            {data.savingsTarget > 0 && (
+              <tr>
+                <td className="row-source">Savings</td>
+                <td>Going to savings &amp; investing</td>
+                <td className="num pos">{fmtUSD0(data.savingsTarget * mult)}</td>
+                <td className="num">{fmtPct(data.savingsTarget / data.monthlyTakeHome, 1)}</td>
+              </tr>
+            )}
+            <tr className="ptable-year-start">
+              <td className="row-source">Total</td>
+              <td><strong>Tracked outflow</strong></td>
+              <td className="num neg"><strong>{fmtUSD0(data.totalOut * mult)}</strong></td>
+              <td className="num"><strong>{fmtPct(data.totalOut / data.monthlyTakeHome, 1)}</strong></td>
+            </tr>
+            <tr>
+              <td className="row-source">Leftover</td>
+              <td><strong>{data.leftover >= 0 ? "Discretionary / untracked" : "Shortfall"}</strong></td>
+              <td className={"num " + (data.leftover >= 0 ? "pos" : "neg")}>
+                <strong>{data.leftover >= 0 ? "+" : ""}{fmtUSD0(data.leftover * mult)}</strong>
+              </td>
+              <td className="num">{fmtPct(data.leftover / data.monthlyTakeHome, 1)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>}
     </section>
   );
 }
@@ -15339,7 +15363,11 @@ function MonthlyYearlyBreakdown({ data }) {
     })),
     { label: "= Available leftover", value: leftover,        kind: "sub" },
     ...cats.filter((c) => c.group === "Save").map((c) => ({
-      label: `→ ${c.label}`, value: c.value, kind: "save",
+      // Money flowing toward debt (Extra debt paydown) is still an outflow visually,
+      // even though it's "your" money. Color it red. Pure savings/investing stays green.
+      label: `→ ${c.label}`,
+      value: c.value,
+      kind: (c.from === "DEBT") ? "out" : "save",
     })),
     { label: "= Discretionary",      value: Math.max(0, leftover - cats.filter((c) => c.group === "Save").reduce((a, c) => a + c.value, 0)), kind: "sub" },
   ];
