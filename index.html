@@ -15238,6 +15238,11 @@ function OverviewCalculator({ profile, getBudgetData }) {
             projection, plus a new Accounts list owned by Overview. */}
         <NetWorthCard data={data} profile={profile} />
 
+        {/* Monte Carlo — stochastic risk model. Samples each expense category
+            from a normal distribution N times and plots the distribution of
+            next-month leftover outcomes. */}
+        {window.MonteCarloCard && <window.MonteCarloCard data={data} />}
+
         {/* ✦ Optimize — only shows when leftover < 0. Suggests specific cuts to flip the
             shortfall into a surplus, ranked by impact + ease (savings rate first, etc.) */}
         <OptimizePanel data={data} view={view} mult={mult} />
@@ -16730,6 +16735,346 @@ function AdminUserDetail({ user, data, onClose }) {
 }
 
 window.AdminCalculator = AdminCalculator;
+
+</script>
+
+<script type="text/babel" data-presets="react">
+// Monte Carlo simulation — stochastic projection of next-month leftover.
+//
+// Why this exists: every other projection in this app is deterministic — one
+// input → one output. Real spending varies (groceries one month, car repair
+// another). A Monte Carlo run samples each expense category from a normal
+// distribution (mean = budgeted, σ = volatility preset) and re-runs the
+// month's cashflow N times, yielding a probability distribution of outcomes.
+//
+// Pure functions exposed on window for testing. The React card lives below.
+
+(function buildMonteCarlo() {
+  // ── Volatility presets (σ as fraction of mean) ──
+  // Picked from typical variance ranges for each category.
+  // User picks one preset per category from a select; advanced users can
+  // override σ directly via the manual input.
+  const VOLATILITY_PRESETS = {
+    stable:   { sigma: 0.05, label: "Stable (±5%)",     example: "rent, subs" },
+    moderate: { sigma: 0.15, label: "Moderate (±15%)",  example: "groceries, utilities, gas" },
+    volatile: { sigma: 0.30, label: "Volatile (±30%)",  example: "dining, entertainment, repairs" },
+  };
+  // Default volatility for each Budget category. User can override.
+  const DEFAULT_VOLATILITY = {
+    rent: "stable",
+    groceries: "moderate",
+    utilities: "moderate",
+    carIns: "stable",
+    gas: "moderate",
+    otherLoan: "stable",
+    secondary: "volatile",
+    subscriptions: "stable",
+  };
+
+  // ── Box-Muller transform for Gaussian samples ──
+  // Produces N(0,1) samples; scaled to N(mean, σ) by the caller.
+  function normalSample(mean, sigma) {
+    const u1 = Math.max(Number.EPSILON, Math.random());
+    const u2 = Math.random();
+    const z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+    return mean + z * sigma;
+  }
+
+  // Run ONE scenario: sample each category, sum into a monthly outflow,
+  // return resulting leftover = takeHome − outflow.
+  function runScenario(takeHome, categories) {
+    let outflow = 0;
+    for (const c of categories) {
+      // Clamp to non-negative; you can't spend negative dollars on rent.
+      const sample = Math.max(0, normalSample(c.mean, c.sigma));
+      outflow += sample;
+    }
+    return takeHome - outflow;
+  }
+
+  // Run N scenarios, return sorted array of leftovers.
+  function runSimulation({ takeHome, categories, runs = 10000 }) {
+    const out = new Array(runs);
+    for (let i = 0; i < runs; i++) {
+      out[i] = runScenario(takeHome, categories);
+    }
+    out.sort((a, b) => a - b);
+    return out;
+  }
+
+  // Extract percentiles from a sorted array.
+  // Standard linear interpolation between adjacent ranks.
+  function percentiles(sortedOutcomes, pcts) {
+    const n = sortedOutcomes.length;
+    if (n === 0) return Object.fromEntries(pcts.map((p) => [p, 0]));
+    const result = {};
+    for (const p of pcts) {
+      const rank = (p / 100) * (n - 1);
+      const lo = Math.floor(rank);
+      const hi = Math.ceil(rank);
+      const frac = rank - lo;
+      result[p] = sortedOutcomes[lo] * (1 - frac) + sortedOutcomes[hi] * frac;
+    }
+    return result;
+  }
+
+  // Probability of an outcome being below a threshold (e.g. P(leftover < 0)).
+  function probBelow(sortedOutcomes, threshold) {
+    let lo = 0, hi = sortedOutcomes.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (sortedOutcomes[mid] < threshold) lo = mid + 1; else hi = mid;
+    }
+    return lo / sortedOutcomes.length;
+  }
+
+  window.MonteCarlo = {
+    VOLATILITY_PRESETS,
+    DEFAULT_VOLATILITY,
+    normalSample,
+    runScenario,
+    runSimulation,
+    percentiles,
+    probBelow,
+  };
+})();
+
+// ─── React card ──────────────────────────────────────────────────────────
+const { useState: useStateMC, useMemo: useMemoMC, useEffect: useEffectMC } = React;
+
+function MonteCarloCard({ data }) {
+  const [open, setOpen] = useStateMC(true);
+  const [volatility, setVolatility] = useStateMC(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("ledger:montecarlo") || "null");
+      if (saved?.volatility) return saved.volatility;
+    } catch {}
+    return { ...window.MonteCarlo.DEFAULT_VOLATILITY };
+  });
+  const [runs, setRuns] = useStateMC(10000);
+
+  useEffectMC(() => {
+    localStorage.setItem("ledger:montecarlo", JSON.stringify({ volatility, runs }));
+  }, [volatility, runs]);
+
+  // Build categories array from Budget data
+  const mc = window.MonteCarlo;
+  const expenses = data?.expenses || {};
+  const takeHome = data?.monthlyTakeHome || 0;
+
+  const categories = useMemoMC(() => {
+    if (!takeHome || !mc) return [];
+    const cats = [];
+    const push = (key, mean) => {
+      if (mean <= 0) return;
+      const preset = mc.VOLATILITY_PRESETS[volatility[key] || "moderate"];
+      cats.push({ key, label: key, mean, sigma: mean * preset.sigma });
+    };
+    push("rent", window.expenseShare ? window.expenseShare(expenses, "rent") : (expenses.rent || 0));
+    push("groceries", expenses.groceries != null ? Number(expenses.groceries) || 0 : Number(expenses.expenses) || 0);
+    push("utilities", window.expenseShare ? window.expenseShare(expenses, "utilities") : Number(expenses.utilities) || 0);
+    push("carIns", Number(expenses.carIns) || 0);
+    push("gas", Number(expenses.gas) || 0);
+    push("otherLoan", Number(expenses.otherLoan) || 0);
+    const sec = (expenses.secondary || []).reduce((a, it) => a + (Number(it.amount) || 0), 0);
+    if (sec > 0) cats.push({ key: "secondary", label: "secondary", mean: sec, sigma: sec * mc.VOLATILITY_PRESETS[volatility.secondary || "volatile"].sigma });
+    const subs = (expenses.subscriptions || []).reduce((a, it) => a + (Number(it.amount) || 0), 0);
+    if (subs > 0) cats.push({ key: "subscriptions", label: "subscriptions", mean: subs, sigma: subs * mc.VOLATILITY_PRESETS[volatility.subscriptions || "stable"].sigma });
+    return cats;
+  }, [expenses, volatility, takeHome]);
+
+  const simResult = useMemoMC(() => {
+    if (!mc || !takeHome || categories.length === 0) return null;
+    const t0 = performance.now();
+    const sorted = mc.runSimulation({ takeHome, categories, runs });
+    const ms = performance.now() - t0;
+    const pcts = mc.percentiles(sorted, [5, 25, 50, 75, 95]);
+    const pNeg = mc.probBelow(sorted, 0);
+    return { sorted, pcts, pNeg, ms };
+  }, [categories, takeHome, runs]);
+
+  if (!data || !window.MonteCarlo) return null;
+
+  return (
+    <section className={"card" + (open ? "" : " is-collapsed")}>
+      <header
+        className="card-head"
+        style={{ cursor: "pointer" }}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <h2 style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span className={"debt-card-chevron" + (open ? " is-open" : "")} style={{ pointerEvents: "none" }} aria-hidden="true">▾</span>
+          Risk projection (Monte Carlo)
+        </h2>
+        <span className="card-tag">
+          {simResult ? `${runs.toLocaleString()} runs · ${simResult.ms.toFixed(0)}ms` : "no data"}
+        </span>
+      </header>
+      {open && <div className="card-body">
+        {!simResult || categories.length === 0 ? (
+          <p className="footnote">Set up your Budget first — the simulator needs at least one expense category to sample.</p>
+        ) : (
+          <>
+            <p className="footnote" style={{ marginTop: 0 }}>
+              Each of your expense categories is sampled from a normal distribution
+              ({runs.toLocaleString()} runs) with σ set by the volatility preset below.
+              The chart shows the full distribution of next-month leftover after sampled expenses.
+            </p>
+
+            {/* Headline result */}
+            <div className="invest-breakdown-grid" style={{ marginBottom: 16 }}>
+              <div className="invest-breakdown-cell">
+                <div className="invest-breakdown-label">p5 (worst-case)</div>
+                <div className="invest-breakdown-value neg">{fmtUSD0(simResult.pcts[5])}</div>
+                <div className="invest-breakdown-sub">5% chance leftover ≤ this</div>
+              </div>
+              <div className="invest-breakdown-cell invest-breakdown-cell-accent">
+                <div className="invest-breakdown-label">p50 (median)</div>
+                <div className="invest-breakdown-value">{fmtUSD0(simResult.pcts[50])}</div>
+                <div className="invest-breakdown-sub">50/50 — typical outcome</div>
+              </div>
+              <div className="invest-breakdown-cell">
+                <div className="invest-breakdown-label">p95 (best-case)</div>
+                <div className="invest-breakdown-value pos">{fmtUSD0(simResult.pcts[95])}</div>
+                <div className="invest-breakdown-sub">5% chance leftover ≥ this</div>
+              </div>
+              <div className={"invest-breakdown-cell " + (simResult.pNeg > 0.20 ? "" : "invest-breakdown-cell-final")}>
+                <div className="invest-breakdown-label">Risk of red month</div>
+                <div className={"invest-breakdown-value " + (simResult.pNeg > 0.20 ? "neg" : "pos")}>
+                  {(simResult.pNeg * 100).toFixed(1)}%
+                </div>
+                <div className="invest-breakdown-sub">probability leftover &lt; $0</div>
+              </div>
+            </div>
+
+            {/* Histogram of outcomes */}
+            <MonteCarloHistogram outcomes={simResult.sorted} pcts={simResult.pcts} />
+
+            {/* Plain-English summary */}
+            <p className="footnote" style={{ marginTop: 16 }}>
+              <strong>80% confidence interval:</strong> next-month leftover lands between{" "}
+              <strong>{fmtUSD0(simResult.pcts[5])}</strong> and{" "}
+              <strong>{fmtUSD0(simResult.pcts[95])}</strong>.{" "}
+              {simResult.pNeg > 0.20
+                ? <span style={{ color: "var(--negative)" }}>⚠ High risk — {(simResult.pNeg * 100).toFixed(0)}% chance you finish the month in the red.</span>
+                : simResult.pNeg > 0.05
+                  ? <span style={{ color: "var(--gold)" }}>Some risk — {(simResult.pNeg * 100).toFixed(1)}% chance of a deficit.</span>
+                  : <span style={{ color: "var(--positive)" }}>Low risk — only {(simResult.pNeg * 100).toFixed(1)}% chance of a deficit.</span>}
+            </p>
+
+            {/* Per-category volatility picker */}
+            <h3 className="sub-head" style={{ marginTop: 24 }}>Volatility per category</h3>
+            <p className="footnote" style={{ marginTop: 0 }}>
+              How much does each category vary month-to-month? Pick a preset; the simulator uses it as σ.
+            </p>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10, marginTop: 12 }}>
+              {categories.map((c) => (
+                <div key={c.key} className="invest-breakdown-cell" style={{ padding: 10 }}>
+                  <div style={{ fontSize: 12, color: "var(--ink-3)", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                    {c.label}
+                  </div>
+                  <div style={{ fontSize: 14, color: "var(--ink)", margin: "2px 0 6px" }}>
+                    {fmtUSD0(c.mean)} · σ {fmtUSD0(c.sigma)}
+                  </div>
+                  <select
+                    className="select"
+                    style={{ width: "100%" }}
+                    value={volatility[c.key] || "moderate"}
+                    onChange={(e) => setVolatility((v) => ({ ...v, [c.key]: e.target.value }))}
+                  >
+                    {Object.entries(window.MonteCarlo.VOLATILITY_PRESETS).map(([k, p]) => (
+                      <option key={k} value={k}>{p.label}</option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+            </div>
+
+            {/* Run count picker */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 16 }}>
+              <span className="footnote" style={{ marginRight: "auto", fontStyle: "normal" }}>Runs:</span>
+              {[1000, 5000, 10000, 50000].map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  className="btn-ghost"
+                  style={runs === n ? { background: "var(--accent-bg)", borderColor: "var(--accent)" } : {}}
+                  onClick={() => setRuns(n)}
+                >
+                  {n.toLocaleString()}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </div>}
+    </section>
+  );
+}
+
+// ─── Histogram (custom SVG — no library) ─────────────────────────────────
+function MonteCarloHistogram({ outcomes, pcts }) {
+  if (!outcomes || outcomes.length === 0) return null;
+  const min = outcomes[0];
+  const max = outcomes[outcomes.length - 1];
+  const BINS = 40;
+  const bins = new Array(BINS).fill(0);
+  const range = max - min || 1;
+  outcomes.forEach((v) => {
+    const idx = Math.min(BINS - 1, Math.max(0, Math.floor(((v - min) / range) * BINS)));
+    bins[idx]++;
+  });
+  const maxCount = Math.max(...bins);
+  const W = 600, H = 160, PAD = 8;
+  const barW = (W - 2 * PAD) / BINS;
+  // Position of p5 / p50 / p95 markers along x-axis
+  const xOf = (v) => PAD + ((v - min) / range) * (W - 2 * PAD);
+
+  return (
+    <div style={{ width: "100%", overflow: "hidden" }}>
+      <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ height: 160 }}>
+        {/* Zero line */}
+        {min < 0 && max > 0 && (
+          <line x1={xOf(0)} y1={0} x2={xOf(0)} y2={H - 24}
+            stroke="var(--negative)" strokeDasharray="3 3" strokeWidth="1" />
+        )}
+        {/* Bars */}
+        {bins.map((count, i) => {
+          const h = (count / maxCount) * (H - 36);
+          const binMid = min + (i + 0.5) * (range / BINS);
+          // Color bars red if center is below 0 (deficit), green if above
+          const color = binMid < 0 ? "rgba(215, 118, 98, 0.7)" : "rgba(77, 167, 122, 0.7)";
+          return (
+            <rect
+              key={i}
+              x={PAD + i * barW}
+              y={H - 24 - h}
+              width={Math.max(0, barW - 1)}
+              height={h}
+              fill={color}
+            />
+          );
+        })}
+        {/* Percentile markers */}
+        {[5, 50, 95].map((p) => (
+          <g key={p}>
+            <line x1={xOf(pcts[p])} y1={4} x2={xOf(pcts[p])} y2={H - 24}
+              stroke={p === 50 ? "var(--gold)" : "var(--ink-3)"} strokeWidth={p === 50 ? 1.5 : 1}
+              strokeDasharray={p === 50 ? "" : "4 3"} />
+            <text x={xOf(pcts[p])} y={12} fill="var(--ink-3)" fontSize="9" textAnchor="middle">
+              p{p}
+            </text>
+          </g>
+        ))}
+        {/* X-axis labels */}
+        <text x={PAD} y={H - 6} fill="var(--ink-3)" fontSize="10">{fmtUSD0(min)}</text>
+        <text x={W - PAD} y={H - 6} fill="var(--ink-3)" fontSize="10" textAnchor="end">{fmtUSD0(max)}</text>
+      </svg>
+    </div>
+  );
+}
+
+window.MonteCarloCard = MonteCarloCard;
 
 </script>
 
