@@ -360,6 +360,14 @@ input, select { font: inherit; color: inherit; }
   flex-direction: column;
   gap: 14px;
 }
+.login-name-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 480px) {
+  .login-name-row { grid-template-columns: 1fr; }
+}
 .login-field {
   display: flex;
   flex-direction: column;
@@ -478,6 +486,12 @@ input, select { font: inherit; color: inherit; }
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.sidebar-account-lastseen {
+  font-size: 10px;
+  color: var(--ink-4);
+  margin-top: 2px;
+  font-style: italic;
 }
 .sidebar-account-actions {
   margin-top: 8px;
@@ -4703,7 +4717,8 @@ function setCurrentUser(email) {
 function LoginScreen({ onLoggedIn }) {
   const [mode, setMode] = useStateAuth("signin"); // signin | signup
   const [email, setEmail] = useStateAuth("");
-  const [name, setName] = useStateAuth("");
+  const [firstName, setFirstName] = useStateAuth("");
+  const [lastName, setLastName] = useStateAuth("");
   const [password, setPassword] = useStateAuth("");
   const [error, setError] = useStateAuth("");
   const [busy, setBusy] = useStateAuth(false);
@@ -4725,7 +4740,17 @@ function LoginScreen({ onLoggedIn }) {
 
       if (mode === "signup") {
         if (map[cleanEmail]) { setError("That email already has an account on this browser. Sign in instead."); setBusy(false); return; }
-        map[cleanEmail] = { name: name.trim() || cleanEmail.split("@")[0], passHash: hash, createdAt: new Date().toISOString() };
+        const cleanFirst = firstName.trim();
+        const cleanLast = lastName.trim();
+        const displayName = (cleanFirst + " " + cleanLast).trim() || cleanEmail.split("@")[0];
+        map[cleanEmail] = {
+          firstName: cleanFirst,
+          lastName: cleanLast,
+          name: displayName,
+          passHash: hash,
+          createdAt: new Date().toISOString(),
+          lastSignIn: new Date().toISOString(),
+        };
         saveAccounts(map);
         setCurrentUser(cleanEmail);
         onLoggedIn(cleanEmail, map[cleanEmail]);
@@ -4733,6 +4758,10 @@ function LoginScreen({ onLoggedIn }) {
         const account = map[cleanEmail];
         if (!account) { setError("No account with that email on this browser. Sign up instead."); setBusy(false); return; }
         if (account.passHash !== hash) { setError("Wrong password."); setBusy(false); return; }
+        // Update last sign-in timestamp so we can show "last seen X" later
+        account.lastSignIn = new Date().toISOString();
+        map[cleanEmail] = account;
+        saveAccounts(map);
         setCurrentUser(cleanEmail);
         onLoggedIn(cleanEmail, account);
       }
@@ -4792,11 +4821,18 @@ function LoginScreen({ onLoggedIn }) {
 
         <form className="login-form" onSubmit={submit}>
           {mode === "signup" && (
-            <label className="login-field">
-              <span>Display name <em>(optional)</em></span>
-              <input type="text" className="text-input" value={name}
-                onChange={(e) => setName(e.target.value)} placeholder="e.g. Nischal" />
-            </label>
+            <div className="login-name-row">
+              <label className="login-field">
+                <span>First name</span>
+                <input type="text" className="text-input" value={firstName}
+                  onChange={(e) => setFirstName(e.target.value)} placeholder="Nischal" autoComplete="given-name" />
+              </label>
+              <label className="login-field">
+                <span>Last name</span>
+                <input type="text" className="text-input" value={lastName}
+                  onChange={(e) => setLastName(e.target.value)} placeholder="Sunar" autoComplete="family-name" />
+              </label>
+            </div>
           )}
           <label className="login-field">
             <span>Email</span>
@@ -12899,6 +12935,7 @@ function ColorModeToggle() {
 }
 
 const CALCULATORS = [
+  { id: "overview",  label: "Overview & totals",     glyph: "O" },
   { id: "budget",    label: "Budget & cashflow",     glyph: "B" },
   { id: "expenses",  label: "Monthly expenses",      glyph: "E" },
   { id: "household", label: "Household & roommates", glyph: "H" },
@@ -12906,7 +12943,6 @@ const CALCULATORS = [
   { id: "tax",       label: "Tax estimator",         glyph: "T" },
   { id: "auto",      label: "Auto & vehicle",        glyph: "A" },
   { id: "debt",      label: "Debt payoff",           glyph: "D" },
-  { id: "overview",  label: "Overview & totals",     glyph: "O" },
 ];
 
 function App() {
@@ -13064,24 +13100,43 @@ function App() {
           <DataButton />
         </div>
 
-        {window.__currentUser && (
-          <div className="sidebar-account">
-            <div className="sidebar-account-row">
-              <div className="sidebar-account-avatar">
-                {(window.__currentUser.name || window.__currentUser.email || "?")[0].toUpperCase()}
+        {window.__currentUser && (() => {
+          const u = window.__currentUser;
+          const display = (u.firstName || u.lastName)
+            ? `${u.firstName || ""} ${u.lastName || ""}`.trim()
+            : (u.name || "Guest");
+          const initials = ((u.firstName || u.name || u.email || "?").charAt(0) +
+                           (u.lastName ? u.lastName.charAt(0) : "")).toUpperCase();
+          // Human-readable "last seen" — only relevant for real accounts
+          let lastSeen = "";
+          if (u.lastSignIn && u.email !== "_guest") {
+            const diff = Date.now() - new Date(u.lastSignIn).getTime();
+            const min = Math.round(diff / 60000);
+            if (min < 1)         lastSeen = "just now";
+            else if (min < 60)   lastSeen = `${min}m ago`;
+            else if (min < 1440) lastSeen = `${Math.round(min/60)}h ago`;
+            else                 lastSeen = `${Math.round(min/1440)}d ago`;
+          }
+          return (
+            <div className="sidebar-account">
+              <div className="sidebar-account-row">
+                <div className="sidebar-account-avatar">{initials}</div>
+                <div className="sidebar-account-meta">
+                  <div className="sidebar-account-name">{display}</div>
+                  <div className="sidebar-account-email">
+                    {u.email === "_guest" ? "Guest · not saved" : u.email}
+                  </div>
+                  {lastSeen && <div className="sidebar-account-lastseen">Last signed in {lastSeen}</div>}
+                </div>
               </div>
-              <div className="sidebar-account-meta">
-                <div className="sidebar-account-name">{window.__currentUser.name || "Guest"}</div>
-                <div className="sidebar-account-email">{window.__currentUser.email === "_guest" ? "Not signed in" : window.__currentUser.email}</div>
+              <div className="sidebar-account-actions">
+                <button className="btn-link" onClick={() => window.__switchAccount && window.__switchAccount()}>Switch</button>
+                <span style={{ color: "var(--ink-4)" }}>·</span>
+                <button className="btn-link" onClick={() => window.__signOut && window.__signOut()}>Sign out</button>
               </div>
             </div>
-            <div className="sidebar-account-actions">
-              <button className="btn-link" onClick={() => window.__switchAccount && window.__switchAccount()}>Switch</button>
-              <span style={{ color: "var(--ink-4)" }}>·</span>
-              <button className="btn-link" onClick={() => window.__signOut && window.__signOut()}>Sign out</button>
-            </div>
-          </div>
-        )}
+          );
+        })()}
 
         <div className="sidebar-foot">
           Personal finance toolkit. All math runs in your browser; nothing is sent anywhere.
