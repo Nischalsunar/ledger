@@ -13589,6 +13589,10 @@ function simulatePayoffWithSavings(debts, monthlyExtra, strategy, monthlySavings
   let pendingExtra = 0; // accumulated extra waiting to be applied at next payment interval
   let runningExtra = 0; // freed-up minimums from paid-off debts (roll forward)
 
+  // Per-month sum of remaining debt balance — used by the Overview net-worth chart.
+  // Index 0 = starting total (before any payment), index k = balance after month k.
+  const monthlyDebtTotal = [list.reduce((a, d) => a + d.balance, 0)];
+
   let month = 0;
   const MAX = 600;
 
@@ -13646,6 +13650,9 @@ function simulatePayoffWithSavings(debts, monthlyExtra, strategy, monthlySavings
     runningExtra += list
       .filter((d) => d.balance === 0 && d.paidoffMonth === month)
       .reduce((a, b) => a + b.minPayment, 0);
+
+    // Snapshot end-of-month total remaining debt for the Overview trend chart
+    monthlyDebtTotal.push(list.reduce((a, d) => a + d.balance, 0));
   }
 
   // Add any leftover pending extra to savings when done
@@ -13656,8 +13663,10 @@ function simulatePayoffWithSavings(debts, monthlyExtra, strategy, monthlySavings
     totalInterest: list.reduce((a, b) => a + b.paidInterest, 0),
     perDebt: list,
     savingsBalance,
+    monthlyDebtTotal,
   };
 }
+window.simulatePayoffWithSavings = simulatePayoffWithSavings;
 
 function simulatePayoff(debts, extra, strategy) {
   // Clone debts with running balances.
@@ -14680,6 +14689,11 @@ function OverviewCalculator({ profile, getBudgetData }) {
           </div>
         </section>
 
+        {/* Net Worth integration: Cash accounts + investment projection − debt balance
+            over the next 5 years. Built from existing debt simulation + investment
+            projection, plus a new Accounts list owned by Overview. */}
+        <NetWorthCard data={data} />
+
         {/* ✦ Optimize — only shows when leftover < 0. Suggests specific cuts to flip the
             shortfall into a surplus, ranked by impact + ease (savings rate first, etc.) */}
         <OptimizePanel data={data} view={view} mult={mult} />
@@ -15065,6 +15079,241 @@ function OptimizePanel({ data, view, mult }) {
           </li>
         ))}
       </ul>
+    </section>
+  );
+}
+
+// ─── Net Worth integration card ──────────────────────────────────────────
+// Pulls in:
+//   • User-entered cash accounts (this card's own state, persisted)
+//   • Investments projected forward via window.projectSingleInvestment
+//   • Debt remaining balance per month via simulatePayoffWithSavings
+// Then computes net worth month-by-month for 60 months and plots it.
+function NetWorthCard({ data }) {
+  const [open, setOpen]         = useStateOv(true);
+  const [accounts, setAccounts] = useStateOv([]);
+  const [horizon, setHorizon]   = useStateOv(60); // months
+
+  // Load + persist accounts list (Overview-owned, separate localStorage key)
+  useEffectOv(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("ledger:accounts") || "null");
+      if (Array.isArray(saved)) setAccounts(saved);
+    } catch {}
+  }, []);
+  useEffectOv(() => {
+    localStorage.setItem("ledger:accounts", JSON.stringify(accounts));
+  }, [accounts]);
+
+  const addAccount = () => setAccounts((a) => [...a, {
+    id: Date.now(), name: "New account", balance: 0, apy: 0.04
+  }]);
+  const updAccount = (id, patch) =>
+    setAccounts((a) => a.map((x) => x.id === id ? { ...x, ...patch } : x));
+  const delAccount = (id) => setAccounts((a) => a.filter((x) => x.id !== id));
+
+  // ── Build monthly debt-balance trajectory ──
+  const debtMonthly = useMemoOv(() => {
+    const debts = data?.debt?.debts || [];
+    if (!debts.length || !window.simulatePayoffWithSavings) return [];
+    const extra = Math.max(0, (Number(data?.extraToDebt) || 0));
+    const savings = Math.max(0, (Number(data?.savingsTarget) || 0));
+    const apy = Number(data?.debt?.savingsAPY) || 0;
+    const strategy = data?.debt?.strategy || "avalanche";
+    const sim = window.simulatePayoffWithSavings(debts, extra, strategy, savings, apy, 1);
+    return sim.monthlyDebtTotal || [];
+  }, [data?.debt?.debts, data?.extraToDebt, data?.savingsTarget, data?.debt?.savingsAPY, data?.debt?.strategy]);
+
+  // ── Build monthly investment-balance trajectory ──
+  // Sum each tracked investment's projection at each month.
+  const investMonthly = useMemoOv(() => {
+    const portfolio = data?.invest?.portfolio;
+    if (!portfolio?.investments?.length || !window.projectSingleInvestment) return [];
+    const monthlySurplus = Math.max(0, (Number(data?.savingsTarget) || 0));
+    const series = new Array(horizon + 1).fill(0);
+    portfolio.investments.forEach((rawInv) => {
+      // The user's tracking choice matters: untracked ones don't count here.
+      const inv = {
+        ...rawInv,
+        compound: rawInv.compound != null ? !!rawInv.compound : false,
+        principle: rawInv.principle != null ? Number(rawInv.principle) : 0,
+        trackInOverview: rawInv.trackInOverview !== false,
+      };
+      if (!inv.trackInOverview) return;
+      // Project at each month from 0..horizon (months/12 = years)
+      for (let m = 0; m <= horizon; m++) {
+        const yrs = m / 12;
+        // Distribute non-compound monthly contribution = budget surplus × pct
+        const monthlyFromBudget = inv.compound ? 0 : (monthlySurplus * (Number(inv.pct) || 0));
+        const proj = window.projectSingleInvestment(inv, yrs, monthlyFromBudget);
+        series[m] += proj.final || 0;
+      }
+    });
+    return series;
+  }, [data?.invest, data?.savingsTarget, horizon]);
+
+  // ── Build monthly cash-accounts trajectory (compound at APY) ──
+  const cashMonthly = useMemoOv(() => {
+    const series = new Array(horizon + 1).fill(0);
+    accounts.forEach((acct) => {
+      const bal0 = Number(acct.balance) || 0;
+      const mRate = Math.pow(1 + (Number(acct.apy) || 0), 1/12) - 1;
+      let bal = bal0;
+      series[0] += bal;
+      for (let m = 1; m <= horizon; m++) {
+        bal = bal * (1 + mRate);
+        series[m] += bal;
+      }
+    });
+    return series;
+  }, [accounts, horizon]);
+
+  // ── Combine into a single net-worth array ──
+  const netWorth = useMemoOv(() => {
+    const rows = [];
+    for (let m = 0; m <= horizon; m++) {
+      const cash   = cashMonthly[m] || 0;
+      const invest = investMonthly[m] || 0;
+      const debt   = debtMonthly[m] != null ? debtMonthly[m] : (debtMonthly[debtMonthly.length - 1] || 0);
+      const nw = cash + invest - debt;
+      rows.push({
+        m,
+        label: m === 0 ? "Now" : (m % 12 === 0 ? `Y${m/12}` : ""),
+        Cash: Math.round(cash),
+        Investments: Math.round(invest),
+        Debt: -Math.round(debt), // negative so it stacks below the axis
+        "Net worth": Math.round(nw),
+      });
+    }
+    return rows;
+  }, [cashMonthly, investMonthly, debtMonthly, horizon]);
+
+  const today    = netWorth[0];
+  const final    = netWorth[netWorth.length - 1];
+  const cashTotal   = accounts.reduce((a, x) => a + (Number(x.balance) || 0), 0);
+  const debtTotal   = data?.debtTotal || 0;
+  const investToday = investMonthly[0] || 0;
+  const change   = (final?.["Net worth"] || 0) - (today?.["Net worth"] || 0);
+
+  const Recharts = window.Recharts;
+
+  return (
+    <section className={"card" + (open ? "" : " is-collapsed")}>
+      <header
+        className="card-head"
+        style={{ cursor: "pointer" }}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <h2 style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span className={"debt-card-chevron" + (open ? " is-open" : "")} style={{ pointerEvents: "none" }} aria-hidden="true">▾</span>
+          Net worth
+        </h2>
+        <span className="card-tag">
+          today {fmtUSD0(today?.["Net worth"] || 0)} → {Math.round(horizon/12)}y {fmtUSD0(final?.["Net worth"] || 0)}
+          {change !== 0 && (
+            <span style={{ marginLeft: 8, color: change >= 0 ? "var(--positive)" : "var(--negative)" }}>
+              {change >= 0 ? "+" : ""}{fmtUSD0(change)}
+            </span>
+          )}
+        </span>
+      </header>
+      {open && <div className="card-body">
+        {/* Four-cell summary strip — today's snapshot */}
+        <div className="invest-breakdown-grid" style={{ marginBottom: 16 }}>
+          <div className="invest-breakdown-cell">
+            <div className="invest-breakdown-label">Cash & accounts</div>
+            <div className="invest-breakdown-value">{fmtUSD0(cashTotal)}</div>
+            <div className="invest-breakdown-sub">{accounts.length} account{accounts.length !== 1 ? "s" : ""}</div>
+          </div>
+          <div className="invest-breakdown-cell">
+            <div className="invest-breakdown-label">Investments (now)</div>
+            <div className="invest-breakdown-value pos">{fmtUSD0(investToday)}</div>
+            <div className="invest-breakdown-sub">starting principle</div>
+          </div>
+          <div className="invest-breakdown-cell" style={{ background: "var(--negative)10" }}>
+            <div className="invest-breakdown-label">Debt</div>
+            <div className="invest-breakdown-value neg">{fmtUSD0(debtTotal)}</div>
+            <div className="invest-breakdown-sub">{(data?.debt?.debts || []).length} debt{(data?.debt?.debts || []).length !== 1 ? "s" : ""}</div>
+          </div>
+          <div className="invest-breakdown-cell invest-breakdown-cell-final">
+            <div className="invest-breakdown-label">Net worth today</div>
+            <div className={"invest-breakdown-value " + ((today?.["Net worth"] || 0) >= 0 ? "surplus" : "deficit")}>
+              {fmtUSD0(today?.["Net worth"] || 0)}
+            </div>
+            <div className="invest-breakdown-sub">= cash + invest − debt</div>
+          </div>
+        </div>
+
+        {/* Chart */}
+        {Recharts && (
+          <div style={{ width: "100%", height: 280, marginBottom: 12 }}>
+            <Recharts.ResponsiveContainer width="100%" height="100%">
+              <Recharts.ComposedChart data={netWorth} margin={{ top: 12, right: 16, bottom: 8, left: 0 }}>
+                <Recharts.CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
+                <Recharts.XAxis
+                  dataKey="m"
+                  tick={{ fill: "var(--ink-3)", fontSize: 11 }}
+                  tickFormatter={(m) => m === 0 ? "Now" : (m % 12 === 0 ? `Y${m/12}` : "")}
+                />
+                <Recharts.YAxis tick={{ fill: "var(--ink-3)", fontSize: 11 }} tickFormatter={(v) => fmtUSD0(v)} width={70} />
+                <Recharts.Tooltip
+                  formatter={(value, name) => [fmtUSD0(value), name]}
+                  labelFormatter={(m) => m === 0 ? "Today" : `Month ${m} (Year ${(m/12).toFixed(1)})`}
+                  contentStyle={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 6 }}
+                />
+                <Recharts.Area type="monotone" dataKey="Cash"        stackId="1" stroke="#5A8FA3" fill="#5A8FA3" fillOpacity={0.6} />
+                <Recharts.Area type="monotone" dataKey="Investments" stackId="1" stroke="#4DA77A" fill="#4DA77A" fillOpacity={0.6} />
+                <Recharts.Area type="monotone" dataKey="Debt"        stackId="2" stroke="#D77662" fill="#D77662" fillOpacity={0.6} />
+                <Recharts.Line type="monotone" dataKey="Net worth"   stroke="#C9A96E" strokeWidth={2.5} dot={false} />
+              </Recharts.ComposedChart>
+            </Recharts.ResponsiveContainer>
+          </div>
+        )}
+
+        {/* Horizon selector */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 18 }}>
+          <span className="footnote" style={{ marginRight: "auto" }}>
+            Net worth = cash accounts (compounded at their APY) + tracked investments (projected) − remaining debt balance.
+          </span>
+          <span className="footnote" style={{ fontStyle: "normal" }}>Horizon:</span>
+          {[12, 24, 36, 60, 120].map((m) => (
+            <button
+              key={m}
+              type="button"
+              className={"btn-ghost" + (horizon === m ? " is-active" : "")}
+              style={horizon === m ? { background: "var(--accent-bg)", borderColor: "var(--accent)" } : {}}
+              onClick={() => setHorizon(m)}
+            >
+              {m / 12}y
+            </button>
+          ))}
+        </div>
+
+        {/* Accounts list */}
+        <h3 className="sub-head" style={{ marginTop: 0 }}>Cash & accounts</h3>
+        {accounts.length === 0 && (
+          <div className="port-empty">No accounts yet — add your checking, savings, brokerage cash balances below.</div>
+        )}
+        {accounts.map((a) => (
+          <div key={a.id} style={{ display: "grid", gridTemplateColumns: "1.6fr 1.3fr 1fr auto", gap: 8, alignItems: "center", marginBottom: 8 }}>
+            <input
+              type="text"
+              className="text-input"
+              value={a.name}
+              onChange={(e) => updAccount(a.id, { name: e.target.value })}
+              placeholder="Account name"
+            />
+            <Money value={a.balance} onChange={(v) => updAccount(a.id, { balance: Math.max(0, Number(v) || 0) })} placeholder="0" />
+            <NumberInput
+              value={((a.apy || 0) * 100).toFixed(2)}
+              onChange={(v) => updAccount(a.id, { apy: Math.max(0, (Number(v) || 0) / 100) })}
+              suffix="% APY"
+            />
+            <button className="icon-btn" onClick={() => delAccount(a.id)} title="Remove account">×</button>
+          </div>
+        ))}
+        <button className="btn-ghost" onClick={addAccount} style={{ marginTop: 6 }}>+ Add account</button>
+      </div>}
     </section>
   );
 }
