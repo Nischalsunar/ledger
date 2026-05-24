@@ -9501,7 +9501,7 @@ function ExpenseBreakdown({ takeHome, expenses, view }) {
   );
 }
 
-// Reusable projection logic so SavingsInvestingCard can consume the same years.
+// Reusable projection logic so SavingsInvestingCard + Overview can consume the same years.
 function buildProjectionYears(inputs, expenses, growth, yearCount) {
   const out = [];
   let salary = inputs.salary;
@@ -9547,6 +9547,9 @@ function buildProjectionYears(inputs, expenses, growth, yearCount) {
   }
   return out;
 }
+// Expose globally so Overview tab can reuse the same projection logic without
+// re-implementing salary/rent/expense growth math.
+window.buildProjectionYears = buildProjectionYears;
 
 function Projection({ years, yearCount, isMonthly, monthRows, max, growth, onYearsChange, onViewChange }) {
   // Whole-section expand/collapse (UI only, not persisted)
@@ -14702,6 +14705,11 @@ function OverviewCalculator({ profile, getBudgetData }) {
             side-by-side in both periods. Same idea as the Budget tab's breakdown. */}
         <MonthlyYearlyBreakdown data={data} />
 
+        {/* 1-5 year projection — applies salary/rent/expense growth assumptions
+            from Budget tab and shows year-by-year take-home, expenses, savings,
+            debt remaining, investment value, net worth. */}
+        <FiveYearProjection data={data} profile={profile} />
+
         {/* Investment projections — lists every investment that has
             "Track in Overview" turned on, with its goal and projected balance. */}
         <TrackedInvestmentsCard data={data} />
@@ -15337,6 +15345,223 @@ function NetWorthCard({ data }) {
           </div>
         ))}
         <button className="btn-ghost" onClick={addAccount} style={{ marginTop: 6 }}>+ Add account</button>
+      </div>}
+    </section>
+  );
+}
+
+// ─── 1-5 year projection ─────────────────────────────────────────────────
+// Year-by-year projection using the SAME growth assumptions the Budget tab uses.
+// Reads ledger:budget.growth for salary/rent/expense annual growth %.
+// Then layers debt simulation + investment projection + cash compounding on top.
+function FiveYearProjection({ data, profile }) {
+  const [open, setOpen] = useStateOv(true);
+  const [yearCount, setYearCount] = useStateOv(5); // 1..5
+
+  // Pull growth assumptions from Budget tab. Fall back to sensible defaults.
+  const growth = useMemoOv(() => {
+    try {
+      const budget = JSON.parse(localStorage.getItem("ledger:budget") || "null");
+      return budget?.growth || { salary: 0.03, rent: 0.03, expenses: 0.025 };
+    } catch { return { salary: 0.03, rent: 0.03, expenses: 0.025 }; }
+  }, [data?.expenses]);
+
+  // Years 1..N using Budget's own buildProjectionYears so income/expenses match
+  const budgetYears = useMemoOv(() => {
+    if (!window.buildProjectionYears || !data?.expenses) return [];
+    return window.buildProjectionYears(profile || {}, data.expenses, growth, yearCount);
+  }, [profile, data?.expenses, growth, yearCount]);
+
+  // Debt remaining at end of each year (month index = yearIndex × 12)
+  const debtAtYear = useMemoOv(() => {
+    const debts = data?.debt?.debts || [];
+    if (!debts.length || !window.simulatePayoffWithSavings) return new Array(yearCount + 1).fill(0);
+    const extra = Math.max(0, Number(data?.extraToDebt) || 0);
+    const sav = Math.max(0, Number(data?.savingsTarget) || 0);
+    const apy = Number(data?.debt?.savingsAPY) || 0;
+    const strategy = data?.debt?.strategy || "avalanche";
+    const sim = window.simulatePayoffWithSavings(debts, extra, strategy, sav, apy, 1);
+    const series = sim.monthlyDebtTotal || [];
+    const out = [];
+    for (let y = 0; y <= yearCount; y++) {
+      const idx = Math.min(series.length - 1, y * 12);
+      out.push(series[idx] != null ? series[idx] : 0);
+    }
+    return out;
+  }, [data?.debt, data?.extraToDebt, data?.savingsTarget, yearCount]);
+
+  // Investments at end of each year — sum tracked investments' projected balance
+  const investAtYear = useMemoOv(() => {
+    const portfolio = data?.invest?.portfolio;
+    if (!portfolio?.investments?.length || !window.projectSingleInvestment) return new Array(yearCount + 1).fill(0);
+    const monthlySurplus = Math.max(0, Number(data?.savingsTarget) || 0);
+    const series = new Array(yearCount + 1).fill(0);
+    portfolio.investments.forEach((raw) => {
+      const inv = {
+        ...raw,
+        compound: raw.compound != null ? !!raw.compound : false,
+        principle: raw.principle != null ? Number(raw.principle) : 0,
+        trackInOverview: raw.trackInOverview !== false,
+      };
+      if (!inv.trackInOverview) return;
+      for (let y = 0; y <= yearCount; y++) {
+        const monthlyFromBudget = inv.compound ? 0 : (monthlySurplus * (Number(inv.pct) || 0));
+        const proj = window.projectSingleInvestment(inv, y, monthlyFromBudget);
+        series[y] += proj.final || 0;
+      }
+    });
+    return series;
+  }, [data?.invest, data?.savingsTarget, yearCount]);
+
+  // Cash accounts compounded at their APY
+  const cashAtYear = useMemoOv(() => {
+    try {
+      const accounts = JSON.parse(localStorage.getItem("ledger:accounts") || "[]");
+      const series = new Array(yearCount + 1).fill(0);
+      accounts.forEach((acct) => {
+        const apy = Number(acct.apy) || 0;
+        const bal0 = Number(acct.balance) || 0;
+        for (let y = 0; y <= yearCount; y++) {
+          series[y] += bal0 * Math.pow(1 + apy, y);
+        }
+      });
+      return series;
+    } catch { return new Array(yearCount + 1).fill(0); }
+  }, [yearCount]);
+
+  // Build per-year row objects
+  const rows = useMemoOv(() => {
+    const out = [];
+    let cumulativeSavings = 0;
+    for (let i = 0; i < yearCount; i++) {
+      const b = budgetYears[i] || {};
+      const takeHome = b.takeHome || 0;
+      const expenses = b.expenses || 0;
+      const leftover = b.leftover || 0;
+      cumulativeSavings += leftover;
+      const yearEndIdx = i + 1;
+      const debt = debtAtYear[yearEndIdx] || 0;
+      const invest = investAtYear[yearEndIdx] || 0;
+      const cash = cashAtYear[yearEndIdx] || 0;
+      const netWorth = cash + invest - debt;
+      out.push({
+        year: b.year || (new Date().getFullYear() + i),
+        n: i + 1,
+        salary: b.salary || 0,
+        takeHome,
+        expenses,
+        leftover,
+        cumulativeSavings,
+        debt,
+        invest,
+        cash,
+        netWorth,
+      });
+    }
+    return out;
+  }, [budgetYears, debtAtYear, investAtYear, cashAtYear, yearCount]);
+
+  const final = rows[rows.length - 1];
+  const todayNet = (cashAtYear[0] || 0) + (investAtYear[0] || 0) - (debtAtYear[0] || 0);
+  const finalNet = final?.netWorth || 0;
+  const delta = finalNet - todayNet;
+
+  return (
+    <section className={"card" + (open ? "" : " is-collapsed")}>
+      <header
+        className="card-head"
+        style={{ cursor: "pointer" }}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <h2 style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span className={"debt-card-chevron" + (open ? " is-open" : "")} style={{ pointerEvents: "none" }} aria-hidden="true">▾</span>
+          1-{yearCount} year projection
+        </h2>
+        <span className="card-tag">
+          today {fmtUSD0(todayNet)} → Y{yearCount} {fmtUSD0(finalNet)}
+          {delta !== 0 && (
+            <span style={{ marginLeft: 8, color: delta >= 0 ? "var(--positive)" : "var(--negative)" }}>
+              {delta >= 0 ? "+" : ""}{fmtUSD0(delta)}
+            </span>
+          )}
+        </span>
+      </header>
+      {open && <div className="card-body">
+        <p className="footnote" style={{ marginTop: 0 }}>
+          Projects forward using salary +{fmtPct(growth.salary, 0)}/yr, rent +{fmtPct(growth.rent, 0)}/yr,
+          expenses +{fmtPct(growth.expenses, 0)}/yr (set on the Budget tab). Debt, investments, and cash
+          come from your Debt, Investing, and Accounts state.
+        </p>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, marginTop: 14 }}>
+          <span className="footnote" style={{ marginRight: "auto", fontStyle: "normal" }}>Show:</span>
+          {[1, 2, 3, 4, 5].map((n) => (
+            <button
+              key={n}
+              type="button"
+              className="btn-ghost"
+              style={yearCount === n ? { background: "var(--accent-bg)", borderColor: "var(--accent)" } : {}}
+              onClick={() => setYearCount(n)}
+            >
+              {n}y
+            </button>
+          ))}
+        </div>
+
+        <table className="ptable">
+          <thead>
+            <tr>
+              <th>Line</th>
+              {rows.map((r) => <th key={r.n} className="num">Year {r.n}<br/><span style={{ fontSize: 10, color: "var(--ink-3)", fontWeight: 400 }}>{r.year}</span></th>)}
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Salary</td>
+              {rows.map((r) => <td key={r.n} className="num">{fmtUSD0(r.salary)}</td>)}
+            </tr>
+            <tr>
+              <td><strong>Take-home</strong></td>
+              {rows.map((r) => <td key={r.n} className="num"><strong>{fmtUSD0(r.takeHome)}</strong></td>)}
+            </tr>
+            <tr>
+              <td>− Annual expenses</td>
+              {rows.map((r) => <td key={r.n} className="num neg">{fmtUSD0(r.expenses)}</td>)}
+            </tr>
+            <tr style={{ borderTop: "1px solid var(--border)" }}>
+              <td><strong>= Annual surplus</strong></td>
+              {rows.map((r) => (
+                <td key={r.n} className={"num " + (r.leftover >= 0 ? "pos" : "neg")}>
+                  <strong>{r.leftover >= 0 ? "+" : ""}{fmtUSD0(r.leftover)}</strong>
+                </td>
+              ))}
+            </tr>
+            <tr>
+              <td><em>Cumulative surplus</em></td>
+              {rows.map((r) => <td key={r.n} className="num" style={{ color: "var(--ink-3)" }}>{fmtUSD0(r.cumulativeSavings)}</td>)}
+            </tr>
+            <tr style={{ borderTop: "1px solid var(--border-2)" }}>
+              <td>Debt remaining (end of year)</td>
+              {rows.map((r) => <td key={r.n} className={"num " + (r.debt > 0 ? "neg" : "")}>{r.debt > 0 ? fmtUSD0(r.debt) : "—"}</td>)}
+            </tr>
+            <tr>
+              <td>Investments (end of year)</td>
+              {rows.map((r) => <td key={r.n} className="num pos">{fmtUSD0(r.invest)}</td>)}
+            </tr>
+            <tr>
+              <td>Cash (end of year)</td>
+              {rows.map((r) => <td key={r.n} className="num">{fmtUSD0(r.cash)}</td>)}
+            </tr>
+            <tr style={{ borderTop: "2px solid var(--border-2)" }}>
+              <td><strong>= Net worth (end of year)</strong></td>
+              {rows.map((r) => (
+                <td key={r.n} className={"num " + (r.netWorth >= 0 ? "surplus" : "deficit")}>
+                  <strong>{fmtUSD0(r.netWorth)}</strong>
+                </td>
+              ))}
+            </tr>
+          </tbody>
+        </table>
       </div>}
     </section>
   );
