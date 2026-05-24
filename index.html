@@ -347,6 +347,97 @@ input, select { font: inherit; color: inherit; }
   line-height: 1.5;
 }
 
+/* ─── Admin panel ─────────────────────────────────────────────────── */
+.admin-explainer {
+  background: var(--accent-bg);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: var(--ink-2);
+  line-height: 1.5;
+}
+.admin-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.admin-list-card {
+  overflow: hidden;
+}
+.admin-table { width: 100%; }
+.admin-row {
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.admin-row:hover { background: var(--surface-2); }
+.admin-row.is-selected { background: var(--accent-bg); }
+.admin-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 11px;
+  font-weight: 600;
+  margin-right: 10px;
+  vertical-align: middle;
+}
+.admin-email {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.admin-role-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.admin-role-pill.is-admin {
+  background: var(--accent);
+  color: var(--bg);
+}
+.admin-role-pill.is-user {
+  background: var(--surface-2);
+  color: var(--ink-3);
+}
+.admin-you-pill {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 8px;
+  background: var(--gold);
+  color: var(--bg);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+.admin-danger {
+  color: var(--negative) !important;
+}
+.admin-detail-card { animation: fadeIn 0.2s; }
+.admin-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 8px 16px;
+}
+.admin-detail-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--border);
+  font-size: 13px;
+}
+.admin-detail-row > span { color: var(--ink-3); }
+.admin-detail-row > strong { color: var(--ink); }
+
 /* ─── Login / account screen ─────────────────────────────────────── */
 .login-overlay {
   position: fixed;
@@ -5155,11 +5246,15 @@ function LoginScreen({ onLoggedIn }) {
         const cleanFirst = firstName.trim();
         const cleanLast = lastName.trim();
         const displayName = (cleanFirst + " " + cleanLast).trim() || cleanEmail.split("@")[0];
+        // First account on this browser auto-becomes admin (can see other users on same browser).
+        // Subsequent signups are regular users. Admin can promote/demote others later from the Admin tab.
+        const isFirstAccount = Object.keys(map).length === 0;
         map[cleanEmail] = {
           firstName: cleanFirst,
           lastName: cleanLast,
           name: displayName,
           passHash: hash,
+          role: isFirstAccount ? "admin" : "user",
           createdAt: new Date().toISOString(),
           lastSignIn: new Date().toISOString(),
         };
@@ -13002,6 +13097,243 @@ window.OverviewCalculator = OverviewCalculator;
 </script>
 
 <script type="text/babel" data-presets="react">
+// Admin tab — visible only to users with role === "admin".
+// Shows all accounts on THIS browser (admin can't reach users on other devices —
+// there's no central database). Click any user to view their saved profile + summary.
+const { useState: useStateAdmin, useEffect: useEffectAdmin, useMemo: useMemoAdmin } = React;
+
+function AdminCalculator() {
+  const [tick, setTick] = useStateAdmin(0);
+  const [selected, setSelected] = useStateAdmin(null);
+
+  useEffectAdmin(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 2000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Always read from raw (non-namespaced) localStorage so admin can see all accounts
+  const accounts = useMemoAdmin(() => {
+    try {
+      return JSON.parse(window.__rawStorage?.get?.("ledger:auth:accounts") || "{}");
+    } catch { return {}; }
+  }, [tick]);
+
+  const currentEmail = window.__rawStorage?.get?.("ledger:auth:currentUser");
+  const entries = Object.entries(accounts);
+
+  // Helper to read any user's saved data via the raw storage
+  const readUserData = (email) => {
+    const get = (key) => {
+      try {
+        const v = window.__rawStorage?.get?.(`ledger:u:${email}:${key}`);
+        return v ? JSON.parse(v) : null;
+      } catch { return null; }
+    };
+    return {
+      profile: get("profile"),
+      budget: get("budget"),
+      auto: get("auto"),
+      debt: get("debt"),
+      invest: get("invest-v2"),
+      onboarded: !!window.__rawStorage?.get?.(`ledger:u:${email}:onboarded`),
+    };
+  };
+
+  const promote = (email) => {
+    if (!window.confirm(`Make ${accounts[email]?.name || email} an admin too?`)) return;
+    const next = { ...accounts, [email]: { ...accounts[email], role: "admin" } };
+    window.__rawStorage.set("ledger:auth:accounts", JSON.stringify(next));
+    setTick((t) => t + 1);
+  };
+  const demote = (email) => {
+    if (email === currentEmail) { alert("You can't demote yourself."); return; }
+    if (!window.confirm(`Remove admin role from ${accounts[email]?.name || email}?`)) return;
+    const next = { ...accounts, [email]: { ...accounts[email], role: "user" } };
+    window.__rawStorage.set("ledger:auth:accounts", JSON.stringify(next));
+    setTick((t) => t + 1);
+  };
+  const deleteAccount = (email) => {
+    if (email === currentEmail) { alert("You can't delete the account you're signed in to. Sign in as another admin first."); return; }
+    if (!window.confirm(`Permanently delete ${email}? This removes the account AND all their saved data on this browser. Cannot be undone.`)) return;
+    // Remove account
+    const next = { ...accounts };
+    delete next[email];
+    window.__rawStorage.set("ledger:auth:accounts", JSON.stringify(next));
+    // Remove all their namespaced data
+    const prefix = `ledger:u:${email}:`;
+    Object.keys(localStorage).filter((k) => k.startsWith(prefix)).forEach((k) => {
+      window.__rawStorage.del(k);
+    });
+    setSelected(null);
+    setTick((t) => t + 1);
+  };
+
+  const fmtDate = (iso) => {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    return d.toLocaleDateString() + " " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  };
+
+  return (
+    <>
+      <header className="page-head">
+        <div><h1 className="page-title">Admin <em>panel</em></h1></div>
+        <div className="page-head-right">
+          <div className="page-head-actions">
+            <span className="card-tag">{entries.length} account{entries.length !== 1 ? "s" : ""} on this browser</span>
+          </div>
+          <div className="page-sub">All accounts that ever signed up on this device</div>
+        </div>
+      </header>
+
+      <div className="admin-explainer">
+        <strong>🔐 Where this data lives:</strong> all accounts and finances are stored in your browser's
+        localStorage on THIS device only. There's no server. Admin = you can see / manage the accounts that
+        have signed up on this same browser. You cannot see accounts on other people's devices.
+      </div>
+
+      <div className="admin-layout">
+        <section className="card admin-list-card">
+          <header className="card-head">
+            <h2>Accounts</h2>
+          </header>
+          <div className="card-body">
+            <table className="ptable admin-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Email</th>
+                  <th>Role</th>
+                  <th>Last sign-in</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {entries.map(([email, a]) => (
+                  <tr
+                    key={email}
+                    className={"admin-row" + (selected === email ? " is-selected" : "")}
+                    onClick={() => setSelected(selected === email ? null : email)}
+                  >
+                    <td>
+                      <span className="admin-avatar">
+                        {((a.firstName || a.name || email).charAt(0) +
+                          (a.lastName ? a.lastName.charAt(0) : "")).toUpperCase()}
+                      </span>
+                      {a.name || email}
+                      {email === currentEmail && <span className="admin-you-pill">YOU</span>}
+                    </td>
+                    <td className="admin-email">{email}</td>
+                    <td>
+                      <span className={"admin-role-pill " + (a.role === "admin" ? "is-admin" : "is-user")}>
+                        {a.role || "user"}
+                      </span>
+                    </td>
+                    <td>{fmtDate(a.lastSignIn || a.createdAt)}</td>
+                    <td onClick={(e) => e.stopPropagation()}>
+                      {a.role === "admin"
+                        ? <button className="btn-link" onClick={() => demote(email)} disabled={email === currentEmail}>demote</button>
+                        : <button className="btn-link" onClick={() => promote(email)}>make admin</button>}
+                      <span style={{ color: "var(--ink-4)", margin: "0 6px" }}>·</span>
+                      <button className="btn-link admin-danger" onClick={() => deleteAccount(email)} disabled={email === currentEmail}>delete</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        {selected && accounts[selected] && (
+          <AdminUserDetail email={selected} account={accounts[selected]} data={readUserData(selected)} />
+        )}
+      </div>
+    </>
+  );
+}
+
+function AdminUserDetail({ email, account, data }) {
+  const p = data.profile || {};
+  const exp = data.budget?.expenses || {};
+  const debts = data.debt?.debts || [];
+  const invSum = (data.invest?.portfolio?.investments || []).reduce((a, b) => a + (b.pct || 0), 0);
+
+  return (
+    <section className="card admin-detail-card">
+      <header className="card-head">
+        <h2>{account.name || email}'s profile</h2>
+        <span className="card-tag">{data.onboarded ? "✓ onboarded" : "wizard not completed"}</span>
+      </header>
+      <div className="card-body">
+        <div className="admin-detail-grid">
+          <div className="admin-detail-row">
+            <span>Email</span><strong>{email}</strong>
+          </div>
+          <div className="admin-detail-row">
+            <span>Role</span>
+            <strong>
+              <span className={"admin-role-pill " + (account.role === "admin" ? "is-admin" : "is-user")}>
+                {account.role || "user"}
+              </span>
+            </strong>
+          </div>
+          <div className="admin-detail-row">
+            <span>Created</span><strong>{account.createdAt ? new Date(account.createdAt).toLocaleString() : "—"}</strong>
+          </div>
+          <div className="admin-detail-row">
+            <span>Last sign-in</span><strong>{account.lastSignIn ? new Date(account.lastSignIn).toLocaleString() : "—"}</strong>
+          </div>
+          <div className="admin-detail-row">
+            <span>Has password</span><strong>{account.passHash && account.passHash.length > 16 ? "yes" : "no (email-only)"}</strong>
+          </div>
+        </div>
+
+        <h3 className="sub-head" style={{ marginTop: 18 }}>Their saved finances</h3>
+        <div className="admin-detail-grid">
+          <div className="admin-detail-row">
+            <span>Annual salary</span>
+            <strong>{p.salary ? `$${p.salary.toLocaleString()}` : "—"}</strong>
+          </div>
+          <div className="admin-detail-row">
+            <span>Location</span>
+            <strong>{p.city ? `${p.city}, ${p.state}` : (p.state || "—")}</strong>
+          </div>
+          <div className="admin-detail-row">
+            <span>Filing</span>
+            <strong>{p.filing === "married" ? "Married, joint" : (p.filing === "single" ? "Single" : "—")}</strong>
+          </div>
+          <div className="admin-detail-row">
+            <span>Rent</span>
+            <strong>{exp.rent ? `$${exp.rent.toLocaleString()}/mo` : "—"}</strong>
+          </div>
+          <div className="admin-detail-row">
+            <span>Vehicle</span>
+            <strong>{data.auto?.type ? `${data.auto.type} · $${(data.auto.insurance || 0).toLocaleString()}/mo insurance` : "no vehicle"}</strong>
+          </div>
+          <div className="admin-detail-row">
+            <span>Debts tracked</span>
+            <strong>{debts.length} {debts.length > 0 ? `($${debts.reduce((a, d) => a + (d.balance || 0), 0).toLocaleString()} total)` : ""}</strong>
+          </div>
+          <div className="admin-detail-row">
+            <span>Investments</span>
+            <strong>{(data.invest?.portfolio?.investments || []).length} types</strong>
+          </div>
+        </div>
+
+        <p className="footnote" style={{ marginTop: 16 }}>
+          Read-only view. To edit this user's data, ask them to sign in themselves.
+          All data is in this browser's localStorage under key prefix <code>ledger:u:{email}:*</code>.
+        </p>
+      </div>
+    </section>
+  );
+}
+
+window.AdminCalculator = AdminCalculator;
+
+</script>
+
+<script type="text/babel" data-presets="react">
 // Onboarding wizard — walks new users through setting up their finances in phases.
 // Saves into the same localStorage keys the rest of the app uses, so everything is
 // pre-populated when they land on the main dashboard.
@@ -13205,9 +13537,12 @@ function AccountPhase({ data, setData, next }) {
       if (mode === "signup") {
         if (map[cleanEmail]) { setError("That email is already registered. Sign in instead."); setBusy(false); return; }
         const displayName = `${firstName.trim()} ${lastName.trim()}`.trim() || cleanEmail.split("@")[0];
+        // First account on browser becomes admin automatically
+        const isFirstAccount = Object.keys(map).length === 0;
         map[cleanEmail] = {
           firstName: firstName.trim(), lastName: lastName.trim(), name: displayName,
-          passHash: hash, createdAt: new Date().toISOString(), lastSignIn: new Date().toISOString(),
+          passHash: hash, role: isFirstAccount ? "admin" : "user",
+          createdAt: new Date().toISOString(), lastSignIn: new Date().toISOString(),
         };
         window.__rawStorage.set("ledger:auth:accounts", JSON.stringify(map));
         window.__rawStorage.set("ledger:auth:currentUser", cleanEmail);
@@ -14074,6 +14409,7 @@ function ProfileCorner() {
               <div className="profile-corner-meta-name">{display}</div>
               <div className="profile-corner-meta-email">
                 {u.email === "_guest" ? "Guest · data not saved" : u.email}
+                {u.role === "admin" && <span className="admin-role-pill is-admin" style={{ marginLeft: 6 }}>ADMIN</span>}
               </div>
               {lastSeen && (
                 <div className="profile-corner-meta-lastseen">Signed in {lastSeen}</div>
@@ -14083,6 +14419,25 @@ function ProfileCorner() {
           <div className="profile-corner-divider" />
           <button className="profile-corner-item" onClick={() => { setOpen(false); window.__switchAccount && window.__switchAccount(); }}>
             <span style={{ width: 20 }}>↻</span> Switch account
+          </button>
+          <button className="profile-corner-item" onClick={() => {
+            setOpen(false);
+            alert(
+              "Where's my data stored?\n\n" +
+              "ALL of your data — including this account — lives in your browser's localStorage on THIS device only.\n\n" +
+              "Nothing is sent to any server. There's no central database.\n\n" +
+              "Storage keys:\n" +
+              "  ledger:auth:accounts        list of accounts on this browser\n" +
+              "  ledger:auth:currentUser     who's signed in\n" +
+              "  ledger:u:<email>:profile    your income/filing/state\n" +
+              "  ledger:u:<email>:budget     your expenses\n" +
+              "  ledger:u:<email>:debt       your debts\n" +
+              "  ledger:u:<email>:auto       your vehicle\n" +
+              "  ledger:u:<email>:invest-v2  your investments\n\n" +
+              "If you clear browser data, you lose everything. Use 'My data' → 'Download backup' to save a copy."
+            );
+          }}>
+            <span style={{ width: 20 }}>ℹ</span> Where's my data?
           </button>
           <button className="profile-corner-item" onClick={() => { setOpen(false); window.__signOut && window.__signOut(); }}>
             <span style={{ width: 20 }}>⎋</span> Sign out
@@ -14133,6 +14488,7 @@ const CALCULATORS = [
   { id: "tax",       label: "Tax estimator",         glyph: "T" },
   { id: "auto",      label: "Auto & vehicle",        glyph: "A" },
   { id: "debt",      label: "Debt payoff",           glyph: "D" },
+  { id: "admin",     label: "Admin",                 glyph: "⚙" },
 ];
 
 function App() {
@@ -14210,6 +14566,7 @@ function App() {
   }, []);
 
   const renderCalc = () => {
+    const AdminC = window.AdminCalculator;
     switch (active) {
       case "budget":    return <BudgetCalculator profile={profile} setProfile={setProfile} />;
       case "expenses":  return <ExpensesCalculator profile={profile} />;
@@ -14219,6 +14576,7 @@ function App() {
       case "auto":      return <AutoLoan getBudgetData={() => window.__ledgerData} />;
       case "debt":      return <DebtPayoff getBudgetData={() => window.__ledgerData} />;
       case "overview":  return <OverviewCalculator profile={profile} getBudgetData={() => window.__ledgerData} />;
+      case "admin":     return AdminC ? <AdminC /> : null;
       default:          return null;
     }
   };
@@ -14253,7 +14611,7 @@ function App() {
 
         <div className="nav-section">Calculators</div>
         <nav className="nav">
-          {/* Hide tabs that don't apply yet — e.g. Debt only shows when user has at least one debt */}
+          {/* Hide tabs that don't apply yet — Debt needs ≥1 debt; Admin needs admin role */}
           {CALCULATORS
             .filter((c) => {
               if (c.id === "debt") {
@@ -14261,6 +14619,9 @@ function App() {
                   const ds = JSON.parse(localStorage.getItem("ledger:debt") || "null");
                   return (ds?.debts || []).length > 0;
                 } catch { return false; }
+              }
+              if (c.id === "admin") {
+                return window.__currentUser?.role === "admin";
               }
               return true;
             })
