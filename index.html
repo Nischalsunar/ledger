@@ -6667,6 +6667,10 @@ const fmtUSD2 = (n) => {
   return s + "$" + Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 const fmtPct = (n, d = 1) => (n * 100).toFixed(d) + "%";
+// Expose for the math test suite + any cross-tab consumers
+window.fmtUSD0 = fmtUSD0;
+window.fmtUSD2 = fmtUSD2;
+window.fmtPct = fmtPct;
 
 const Field = ({ label, hint, children }) => (
   <label className="field">
@@ -9014,6 +9018,31 @@ function DataButton() {
             <span>
               <div className="data-menu-item-title">Copy share link</div>
               <div className="data-menu-item-sub">Anyone opening it sees your salary, expenses, debts, and investments — read-only</div>
+            </span>
+          </button>
+
+          <button className="data-menu-item" onClick={() => {
+            if (!window.runMathTests) {
+              setStatus({ kind: "err", message: "Test suite not loaded." });
+              return;
+            }
+            const r = window.runMathTests();
+            const passed = r.passed, total = r.total;
+            if (passed === total) {
+              setStatus({ kind: "ok", message: `✓ All ${total} math tests passed. (See console for details.)` });
+            } else {
+              const failed = r.results.filter((x) => !x.pass);
+              const first = failed[0];
+              setStatus({
+                kind: "err",
+                message: `${total - passed}/${total} tests failed. First: ${first.name} — ${first.error}. See console for full list.`,
+              });
+            }
+          }}>
+            <span className="data-menu-glyph">🧪</span>
+            <span>
+              <div className="data-menu-item-title">Run math tests</div>
+              <div className="data-menu-item-sub">Verifies optimizer, projections, expense shares, payoff math — results in console + here</div>
             </span>
           </button>
 
@@ -16701,6 +16730,228 @@ function AdminUserDetail({ user, data, onClose }) {
 }
 
 window.AdminCalculator = AdminCalculator;
+
+</script>
+
+<script type="text/babel" data-presets="react">
+// Math test suite — browser-runnable, no Node required. Asserts against
+// every math helper that the app exposes on `window`. Trigger via the
+// My-data menu "Run math tests" button (calls window.runMathTests).
+//
+// Tests are intentionally small and pinned to specific expected values so
+// regressions in the cents refactor (Section B) are caught immediately.
+(function buildMathTests() {
+  const TESTS = [];
+  function t(name, fn) { TESTS.push({ name, fn }); }
+
+  // Tolerance for float comparisons (1 cent)
+  const APPROX = 0.01;
+  function eq(a, b, tol = APPROX) {
+    if (typeof a === "number" && typeof b === "number") {
+      return Math.abs(a - b) <= tol;
+    }
+    return a === b;
+  }
+  function assert(cond, msg) {
+    if (!cond) throw new Error(msg || "assertion failed");
+  }
+
+  // ── fmtUSD0 (currency format with NaN/Infinity guard) ─────────────────
+  t("fmtUSD0: formats integer", () => {
+    assert(window.fmtUSD0(1234) === "$1,234", "expected $1,234");
+  });
+  t("fmtUSD0: handles NaN as em-dash", () => {
+    const r = window.fmtUSD0(NaN);
+    assert(r === "—" || r === "$0", "expected — or $0, got " + r);
+  });
+  t("fmtUSD0: handles Infinity as em-dash", () => {
+    const r = window.fmtUSD0(Infinity);
+    assert(r === "—" || r === "$0", "expected — or $0, got " + r);
+  });
+  t("fmtUSD0: handles negative", () => {
+    const r = window.fmtUSD0(-500);
+    assert(r === "-$500" || r === "−$500" || r.startsWith("-"), "expected negative format, got " + r);
+  });
+
+  // ── expenseShare (rent/utilities ÷ N people) ──────────────────────────
+  t("expenseShare: rent ÷ 2 roommates", () => {
+    const e = { rent: 1800, rentSplit: 2 };
+    assert(eq(window.expenseShare(e, "rent"), 900), `expected 900, got ${window.expenseShare(e, "rent")}`);
+  });
+  t("expenseShare: no split = full amount", () => {
+    const e = { rent: 1000 };
+    assert(eq(window.expenseShare(e, "rent"), 1000), "expected 1000");
+  });
+  t("expenseShare: empty data returns 0", () => {
+    assert(eq(window.expenseShare({}, "rent"), 0), "expected 0");
+  });
+  t("expenseShare: split=0 doesn't divide by zero", () => {
+    const e = { rent: 1000, rentSplit: 0 };
+    const r = window.expenseShare(e, "rent");
+    assert(isFinite(r) && r > 0, "expected finite positive, got " + r);
+  });
+
+  // ── sumExpenses (back-compat for old `expenses` key) ──────────────────
+  t("sumExpenses: new schema with groceries+utilities", () => {
+    const e = { rent: 1000, groceries: 400, utilities: 200, carIns: 100, gas: 150, otherLoan: 50 };
+    const r = window.sumExpenses(e);
+    assert(eq(r, 1900), `expected 1900, got ${r}`);
+  });
+  t("sumExpenses: legacy combined `expenses` field still works", () => {
+    const e = { rent: 1000, expenses: 600, carIns: 100, gas: 150, otherLoan: 50 };
+    const r = window.sumExpenses(e);
+    // legacy 600 → treated as groceries (utilities=0)
+    assert(eq(r, 1900), `expected 1900, got ${r}`);
+  });
+  t("sumExpenses: empty returns 0", () => {
+    assert(eq(window.sumExpenses({}), 0), "expected 0");
+  });
+
+  // ── optimizeAllocation (the upgraded optimizer) ───────────────────────
+  t("optimizer: no debts → 25% / 75% (Savings)", () => {
+    const r = window.optimizeAllocation({
+      debts: [], cash: 1000, savingsAPY: 0.04,
+      constraints: { minEmergencyFund: 0, clearSmallDebtsFirst: false, smallDebtThreshold: 500, maxDebtPctForcedSavings: 0.95 },
+      currentLiquid: 999999,
+    });
+    assert(r.priority === "Savings", "expected Savings priority, got " + r.priority);
+  });
+  t("optimizer: high debt APR → 90% Debt", () => {
+    const r = window.optimizeAllocation({
+      debts: [{ balance: 5000, apr: 0.24, minPayment: 100 }],
+      cash: 1000, savingsAPY: 0.04,
+      constraints: { minEmergencyFund: 0, clearSmallDebtsFirst: false, smallDebtThreshold: 500, maxDebtPctForcedSavings: 0.95 },
+      currentLiquid: 999999,
+    });
+    assert(r.priority === "Debt", "expected Debt priority, got " + r.priority);
+    assert(eq(r.pct, 0.9), "expected pct 0.9, got " + r.pct);
+  });
+  t("optimizer: emergency fund constraint triggers", () => {
+    const r = window.optimizeAllocation({
+      debts: [{ balance: 5000, apr: 0.24, minPayment: 100 }],
+      cash: 1000, savingsAPY: 0.04,
+      constraints: { minEmergencyFund: 1000, clearSmallDebtsFirst: false, smallDebtThreshold: 500, maxDebtPctForcedSavings: 0.95 },
+      currentLiquid: 100, // below floor
+    });
+    assert(r.constraintHit === "emergency", "expected emergency constraint, got " + r.constraintHit);
+    assert(r.priority === "Savings", "expected Savings priority");
+  });
+  t("optimizer: small debt clears first (snowball)", () => {
+    const r = window.optimizeAllocation({
+      debts: [{ balance: 300, apr: 0.05, minPayment: 25 }],
+      cash: 1000, savingsAPY: 0.10, // savings beats debt, but small debt wins
+      constraints: { minEmergencyFund: 0, clearSmallDebtsFirst: true, smallDebtThreshold: 500, maxDebtPctForcedSavings: 0.95 },
+      currentLiquid: 999999,
+    });
+    assert(r.constraintHit === "smallDebt", "expected smallDebt constraint, got " + r.constraintHit);
+    assert(r.priority === "Debt", "expected Debt priority");
+  });
+  t("optimizer: max-debt-share caps split", () => {
+    const r = window.optimizeAllocation({
+      debts: [{ balance: 10000, apr: 0.30, minPayment: 200 }],
+      cash: 1000, savingsAPY: 0.01,
+      constraints: { minEmergencyFund: 0, clearSmallDebtsFirst: false, smallDebtThreshold: 0, maxDebtPctForcedSavings: 0.7 },
+      currentLiquid: 999999,
+    });
+    // Would normally be 0.9 but cap is 0.7
+    assert(eq(r.pct, 0.7), "expected pct capped at 0.7, got " + r.pct);
+    assert(r.constraintHit === "maxDebtShare", "expected maxDebtShare constraint");
+  });
+
+  // ── projectSingleInvestment ──────────────────────────────────────────
+  t("projectSingleInvestment: $0 → $0", () => {
+    const r = window.projectSingleInvestment(
+      { compound: false, principle: 0, returnRate: 0.05 }, 10, 0
+    );
+    assert(eq(r.final, 0), "expected 0");
+  });
+  t("projectSingleInvestment: lump sum compounds", () => {
+    // $1000 at 10%/yr for 10 years should yield ~$2593
+    const r = window.projectSingleInvestment(
+      { compound: false, principle: 1000, returnRate: 0.10 }, 10, 0
+    );
+    assert(r.final > 2500 && r.final < 2700, `expected ~$2593, got ${r.final}`);
+  });
+  t("projectSingleInvestment: compound contribution mode", () => {
+    // $100/mo at 0% for 12 months = $1200
+    const r = window.projectSingleInvestment(
+      { compound: true, principle: 100, returnRate: 0 }, 1, 0
+    );
+    assert(eq(r.final, 1200, 5), `expected 1200, got ${r.final}`);
+  });
+  t("projectSingleInvestment: extreme rate doesn't return Infinity", () => {
+    // 10%/month for 50 years would overflow without clamping
+    const r = window.projectSingleInvestment(
+      { compound: true, principle: 500, returnRate: Math.pow(1.10, 12) - 1 }, 50, 0
+    );
+    assert(isFinite(r.final), "expected finite, got " + r.final);
+  });
+
+  // ── simulatePayoff (deterministic month-by-month) ─────────────────────
+  t("simulatePayoff: 0% rate, $1000 balance, $100 min → 10 months", () => {
+    const r = window.simulatePayoffWithSavings(
+      [{ name: "X", balance: 1000, apr: 0, minPayment: 100 }],
+      0, "avalanche", 0, 0, 1
+    );
+    assert(r.months === 10, `expected 10 months, got ${r.months}`);
+    assert(eq(r.totalInterest, 0), "expected 0 interest at 0% rate");
+  });
+  t("simulatePayoff: high rate produces positive interest", () => {
+    const r = window.simulatePayoffWithSavings(
+      [{ name: "X", balance: 5000, apr: 0.24, minPayment: 200 }],
+      0, "avalanche", 0, 0, 1
+    );
+    assert(r.totalInterest > 0, "expected interest > 0");
+    assert(r.months > 0 && r.months < 600, "expected finite months");
+  });
+  t("simulatePayoff: monthlyDebtTotal array length matches months", () => {
+    const r = window.simulatePayoffWithSavings(
+      [{ name: "X", balance: 1000, apr: 0, minPayment: 100 }],
+      0, "avalanche", 0, 0, 1
+    );
+    assert(Array.isArray(r.monthlyDebtTotal), "expected monthlyDebtTotal array");
+    assert(r.monthlyDebtTotal[0] === 1000, "expected starting total = 1000");
+    assert(eq(r.monthlyDebtTotal[r.monthlyDebtTotal.length - 1], 0), "expected ending total = 0");
+  });
+
+  // ── projectMonthEnd (burn rate calc) ─────────────────────────────────
+  if (typeof window.projectMonthEnd === "function") {
+    t("projectMonthEnd: needs 3+ days of data", () => {
+      const r = window.projectMonthEnd({ spentSoFar: 50, daysElapsed: 1, budgetedMonth: 1000, today: new Date(2026, 5, 1) });
+      assert(!r.ok, "expected ok:false for day 1");
+    });
+    t("projectMonthEnd: extrapolates linearly", () => {
+      const r = window.projectMonthEnd({ spentSoFar: 300, daysElapsed: 10, budgetedMonth: 900, today: new Date(2026, 5, 10) });
+      assert(r.ok, "expected ok:true");
+      // 300 / 10 = $30/day, 30 days in June 2026 → projected $900
+      assert(eq(r.projectedTotal, 900, 5), `expected ~900, got ${r.projectedTotal}`);
+    });
+    t("projectMonthEnd: rejects negative spent", () => {
+      const r = window.projectMonthEnd({ spentSoFar: -50, daysElapsed: 5, budgetedMonth: 1000 });
+      assert(!r.ok, "expected ok:false for negative spent");
+    });
+  }
+
+  // Runner — returns array of { name, pass, error? }
+  window.runMathTests = function runMathTests() {
+    const results = [];
+    for (const { name, fn } of TESTS) {
+      try {
+        fn();
+        results.push({ name, pass: true });
+      } catch (e) {
+        results.push({ name, pass: false, error: e.message });
+      }
+    }
+    const passed = results.filter((r) => r.pass).length;
+    console.log(`%c${passed}/${results.length} math tests passed`,
+      passed === results.length ? "color:green;font-weight:bold" : "color:red;font-weight:bold");
+    results.filter((r) => !r.pass).forEach((r) => {
+      console.error("✗", r.name, "—", r.error);
+    });
+    return { passed, total: results.length, results };
+  };
+})();
 
 </script>
 
