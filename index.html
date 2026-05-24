@@ -12439,7 +12439,13 @@ function AutoLoan({ getBudgetData }) {
   useEffectAuto(() => {
     try {
       const saved = JSON.parse(localStorage.getItem("ledger:auto") || "null");
-      if (saved) setV((cur) => ({ ...cur, ...saved }));
+      if (saved) {
+        // Defensive: any user with a saved `maintenance: 80` (or other legacy
+        // default) from before the auto-fill removal gets it wiped to 0 here.
+        // The field is no longer used by the math but kept zeroed for clarity.
+        saved.maintenance = 0;
+        setV((cur) => ({ ...cur, ...saved }));
+      }
     } catch {}
   }, []);
   useEffectAuto(() => {
