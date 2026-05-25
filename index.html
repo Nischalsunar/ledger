@@ -8410,6 +8410,73 @@ const V2_TABS = [
   { id: "record",     label: "Record",     glyph: "R" },
 ];
 
+// Signed-in user info + sign-out at the bottom of the sidebar. v1 has a
+// ProfileCorner widget in the top-right of every page; v2 keeps things
+// minimal by tucking the same affordances into the sidebar footer.
+function V2ProfileBlock() {
+  const [user, setUser] = useStateV2(() => window.__currentUser || null);
+  useEffectV2(() => {
+    // Poll for auth changes — there's no fine-grained event on __currentUser
+    // and the cost of a 1.5s interval is negligible.
+    const id = setInterval(() => {
+      const next = window.__currentUser || null;
+      setUser((prev) => {
+        if (prev === next) return prev;
+        if (prev && next && prev.email === next.email && prev.uid === next.uid) return prev;
+        return next;
+      });
+    }, 1500);
+    return () => clearInterval(id);
+  }, []);
+
+  if (!user) return null;
+
+  const email = user.email || "Signed in";
+  const initial = (email[0] || "?").toUpperCase();
+  const handleSignOut = async () => {
+    const ok = window.confirm("Sign out of Ledger? Your local data stays on this device.");
+    if (!ok) return;
+    try { await window.__signOut?.(); } catch (e) { console.warn(e); }
+  };
+
+  return (
+    <div style={{ marginTop: "auto", padding: "16px 12px 12px", borderTop: "1px solid var(--border)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+        <span
+          style={{
+            width: 32, height: 32, borderRadius: "50%",
+            background: "var(--accent)", color: "var(--ai-fab-fg, #fff)",
+            display: "inline-flex", alignItems: "center", justifyContent: "center",
+            fontWeight: 600, fontSize: 14, flexShrink: 0,
+          }}
+          title={email}
+          aria-hidden="true"
+        >
+          {initial}
+        </span>
+        <span style={{
+          fontSize: 12, color: "var(--ink-2)",
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        }} title={email}>
+          {email}
+        </span>
+      </div>
+      <button
+        type="button"
+        onClick={handleSignOut}
+        style={{
+          width: "100%", padding: "6px 10px", fontSize: 12,
+          border: "1px solid var(--border)", background: "transparent",
+          color: "var(--ink-3)", borderRadius: 4, cursor: "pointer",
+        }}
+        title="Sign out of Ledger"
+      >
+        Sign out
+      </button>
+    </div>
+  );
+}
+
 function V2Shell() {
   const [active, setActive] = useStateV2(() => {
     const hash = window.location.hash.slice(1);
@@ -8508,6 +8575,8 @@ function V2Shell() {
             <span>Full calculator</span>
           </a>
         </nav>
+
+        <V2ProfileBlock />
       </aside>
 
       {sidebarHidden && (
