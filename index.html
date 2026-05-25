@@ -14142,6 +14142,14 @@ function DebtPayoff({ getBudgetData }) {
   // Custom $ amount to pay toward debt (overrides the % slider when set)
   const [customDebtAmount, setCustomDebtAmount] = useStateDebt(null);
 
+  // Periodic tick used by currentLiquid + budgetLeftover to re-read external state.
+  // Declared HERE (before the memos that depend on it) to avoid temporal-dead-zone errors.
+  const [tick, setTick] = useStateDebt(0);
+  useEffectDebt(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 1500);
+    return () => clearInterval(id);
+  }, []);
+
   // Auto-link spare cash to Budget's monthly leftover when autoSpare is on.
   const budgetData = getBudgetData && getBudgetData();
   const budgetLeftover = useMemoDebt(() => {
@@ -14204,13 +14212,6 @@ function DebtPayoff({ getBudgetData }) {
   useEffectDebt(() => {
     if (autoSpare && budgetLeftover != null) setSpareCash(budgetLeftover);
   }, [autoSpare, budgetLeftover]);
-
-  // Force re-read of budget data periodically so the link stays live.
-  const [tick, setTick] = useStateDebt(0);
-  useEffectDebt(() => {
-    const id = setInterval(() => setTick((t) => t + 1), 1500);
-    return () => clearInterval(id);
-  }, []);
 
   useEffectDebt(() => {
     try {
