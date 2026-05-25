@@ -5322,6 +5322,52 @@ html[data-color-mode="light"] .date-input { color-scheme: light; }
   margin-top: 4px;
 }
 
+/* ===== AutoSave indicator pill ===== */
+.autosave-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  font-family: var(--sans);
+  border: 1px solid transparent;
+  transition: background 200ms ease, color 200ms ease, border-color 200ms ease;
+  white-space: nowrap;
+}
+.autosave-idle {
+  color: var(--ink-3);
+  background: var(--surface-2);
+  border-color: var(--border);
+}
+.autosave-idle::before {
+  content: "";
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--ink-3);
+}
+.autosave-saving {
+  color: var(--gold);
+  background: rgba(201, 169, 110, 0.08);
+  border-color: var(--gold-dim);
+}
+.autosave-saving::before {
+  content: "";
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--gold);
+  animation: autosave-pulse 0.9s ease-in-out infinite;
+}
+@keyframes autosave-pulse {
+  0%, 100% { opacity: 0.4; transform: scale(0.85); }
+  50%      { opacity: 1.0; transform: scale(1.0); }
+}
+.autosave-saved {
+  color: var(--accent-2);
+  background: var(--accent-bg);
+  border-color: var(--accent-dim);
+}
+
 /* ===== Onboarding: Google sign-in option highlight ===== */
 .onb-account-option-google {
   border-color: var(--accent-dim) !important;
@@ -6699,6 +6745,51 @@ const fmtPct = (n, d = 1) => (n * 100).toFixed(d) + "%";
 window.fmtUSD0 = fmtUSD0;
 window.fmtUSD2 = fmtUSD2;
 window.fmtPct = fmtPct;
+
+// ── AutoSaveIndicator ─────────────────────────────────────────────────
+// Watches a value via deep equality; shows "Saving…" briefly when it changes
+// and "✓ Saved · Xs ago" otherwise. Drop this anywhere — pass any object/array.
+function AutoSaveIndicator({ value, label = "Saved" }) {
+  const [lastEditAt, setLastEditAt] = useStateShared(null);
+  const [showSaving, setShowSaving] = useStateShared(false);
+  const isFirst = React.useRef(true);
+  const [, forceTick] = useStateShared(0);
+
+  React.useEffect(() => {
+    // First run after mount is the initial load — don't show "Saving"
+    if (isFirst.current) { isFirst.current = false; return; }
+    setShowSaving(true);
+    setLastEditAt(Date.now());
+    const t = setTimeout(() => setShowSaving(false), 700);
+    return () => clearTimeout(t);
+  }, [JSON.stringify(value)]);
+
+  // Update the "X ago" label every 5s
+  React.useEffect(() => {
+    const id = setInterval(() => forceTick((n) => n + 1), 5000);
+    return () => clearInterval(id);
+  }, []);
+
+  if (lastEditAt == null) {
+    // No edits this session yet — show a neutral indicator so user knows it's wired
+    return (
+      <span className="autosave-pill autosave-idle" title="Edits auto-save to your browser + cloud as you type">
+        Auto-save on
+      </span>
+    );
+  }
+  if (showSaving) {
+    return <span className="autosave-pill autosave-saving">Saving…</span>;
+  }
+  const ago = Math.floor((Date.now() - lastEditAt) / 1000);
+  const agoText = ago < 5 ? "just now" : ago < 60 ? `${ago}s ago` : `${Math.floor(ago/60)}m ago`;
+  return (
+    <span className="autosave-pill autosave-saved" title={`Last save: ${new Date(lastEditAt).toLocaleTimeString()}`}>
+      ✓ {label} · {agoText}
+    </span>
+  );
+}
+window.AutoSaveIndicator = AutoSaveIndicator;
 
 // ── Integer-cents money helpers (Section B) ────────────────────────────
 // Use these inside long iterative loops (compound projection, debt sim) to
@@ -10141,6 +10232,7 @@ function BudgetCalculator({ profile, setProfile }) {
         </div>
         <div className="page-head-right">
           <div className="page-head-actions">
+            {window.AutoSaveIndicator && <window.AutoSaveIndicator value={{ inputs, expenses, growth }} />}
             <div className="view-toggle">
               <Segment
                 value={view}
@@ -10289,6 +10381,7 @@ function ExpensesCalculator({ profile }) {
         <div><h1 className="page-title">Monthly <em>expenses</em></h1></div>
         <div className="page-head-right">
           <div className="page-head-actions">
+            {window.AutoSaveIndicator && <window.AutoSaveIndicator value={expenses} />}
             <div className="view-toggle">
               <Segment
                 value={view}
@@ -10301,7 +10394,7 @@ function ExpensesCalculator({ profile }) {
             </div>
             <ExportButton calculatorName="Monthly expenses" />
           </div>
-          <div className="page-sub">Primary needs · Secondary wants · Subscriptions</div>
+          <div className="page-sub">Primary needs · Secondary wants · Subscriptions · auto-saves as you type</div>
         </div>
       </header>
 
@@ -10667,6 +10760,7 @@ function HouseholdCalculator({ profile, getBudgetData }) {
         </div>
         <div className="page-head-right">
           <div className="page-head-actions">
+            {window.AutoSaveIndicator && <window.AutoSaveIndicator value={household} />}
             <div className="view-toggle">
               <Segment
                 value={view}
@@ -11833,6 +11927,7 @@ function InvestingCalculator({ profile, getBudgetData }) {
         </div>
         <div className="page-head-right">
           <div className="page-head-actions">
+            {window.AutoSaveIndicator && <window.AutoSaveIndicator value={{ portfolio, years, horizonUnit, fundingMode, customMonthly, rateMode }} />}
             <div className="view-toggle">
               <Segment
                 value={view}
@@ -13230,6 +13325,7 @@ function AutoLoan({ getBudgetData }) {
         </div>
         <div className="page-head-right">
           <div className="page-head-actions">
+            {window.AutoSaveIndicator && <window.AutoSaveIndicator value={v} />}
             <button
               className="export-btn"
               onClick={() => upd("introComplete", false)}
@@ -14350,6 +14446,7 @@ function DebtPayoff({ getBudgetData }) {
         <div><h1 className="page-title">Debt <em>payoff</em></h1></div>
         <div className="page-head-right">
           <div className="page-head-actions">
+            {window.AutoSaveIndicator && <window.AutoSaveIndicator value={{ debts, spareCash, debtPct, savingsAPY, strategy, customDebtAmount, manualMode, constraints }} />}
             <ExportButton calculatorName="Debt payoff" />
           </div>
           <div className="page-sub">Snowball vs avalanche · find your fastest exit</div>
