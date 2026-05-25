@@ -16034,24 +16034,26 @@ function CurrentSummary({ transactions }) {
 }
 
 // ─── Top-level tab component ─────────────────────────────────────────────
-function RecordTab() {
+function RecordTab({ hideSummary, hideHeader } = {}) {
   const transactions = window.useTransactions();
   const [editing, setEditing] = useStateRec(null);
 
   return (
     <>
-      <header className="page-head">
-        <div>
-          <h1 className="page-title">Record</h1>
-        </div>
-        <div className="page-head-right">
-          <div className="page-sub">
-            Log actual spending · the only data-entry surface for transactions · auto-saves
+      {!hideHeader && (
+        <header className="page-head">
+          <div>
+            <h1 className="page-title">Record</h1>
           </div>
-        </div>
-      </header>
+          <div className="page-head-right">
+            <div className="page-sub">
+              Log actual spending · the only data-entry surface for transactions · auto-saves
+            </div>
+          </div>
+        </header>
+      )}
 
-      <CurrentSummary transactions={transactions} />
+      {!hideSummary && <CurrentSummary transactions={transactions} />}
 
       <RecordEntryForm
         editing={editing}
@@ -16071,6 +16073,7 @@ function RecordTab() {
 }
 
 window.RecordTab = RecordTab;
+window.CurrentSummary = CurrentSummary;
 
 </script>
 
