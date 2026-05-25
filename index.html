@@ -5368,6 +5368,96 @@ html[data-color-mode="light"] .date-input { color-scheme: light; }
   border-color: var(--accent-dim);
 }
 
+/* ===== Record tab — timeline of dated transactions ===== */
+.record-day {
+  border-top: 1px solid var(--border);
+}
+.record-day:first-child {
+  border-top: none;
+}
+.record-day-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 14px 18px 8px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+.record-day-date {
+  font-family: var(--display);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-2);
+  letter-spacing: 0.02em;
+}
+.record-day-total {
+  font-family: var(--display);
+  font-size: 15px;
+  font-feature-settings: "tnum";
+  color: var(--ink);
+  font-weight: 500;
+}
+.record-item {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--border);
+  transition: background 120ms;
+}
+.record-item:last-child {
+  border-bottom: none;
+}
+.record-item:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+.record-item-main {
+  min-width: 0;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.record-item-category {
+  color: var(--ink);
+  font-weight: 500;
+}
+.record-item-note {
+  color: var(--ink-3);
+  font-style: italic;
+}
+.record-item-amount {
+  font-family: var(--display);
+  font-feature-settings: "tnum";
+  font-size: 15px;
+  color: var(--ink);
+  font-weight: 500;
+  min-width: 80px;
+  text-align: right;
+}
+.record-item-actions {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+}
+.record-item-delete {
+  color: var(--negative) !important;
+}
+.record-item-delete:hover {
+  color: var(--ink) !important;
+  background: rgba(215, 118, 98, 0.12);
+}
+@media (max-width: 640px) {
+  .record-item {
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto;
+    gap: 4px 12px;
+  }
+  .record-item-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+  }
+}
+
 /* ===== Onboarding: Google sign-in option highlight ===== */
 .onb-account-option-google {
   border-color: var(--accent-dim) !important;
@@ -15418,6 +15508,322 @@ window.DebtPayoff = DebtPayoff;
 </script>
 
 <script type="text/babel" data-presets="react">
+// Record tab — dated expense transaction log.
+//
+// The ONLY data-entry surface for window.Transactions. Other tabs (the
+// existing 9 calculator tabs) are untouched. The Current Summary inside
+// this tab (read-only) lives below in Step 3.
+//
+// Architecture:
+//   • Reads via the useTransactions React hook (exposed by calc-transactions.jsx).
+//   • Mutates via window.Transactions.add/edit/remove.
+//   • Never touches localStorage directly.
+//   • Money math: dollars typed in the form → toCents on submit, stored as
+//     amount_cents. Display via fmtUSD0(toDollars(cents)).
+//
+// UI patterns: matches the existing app — uses Field, NumberInput from
+// shared.jsx, card / card-head / card-body / port-empty classes.
+
+const { useState: useStateRec, useMemo: useMemoRec, useEffect: useEffectRec, useRef: useRefRec } = React;
+
+// Common categories — quick-pick chips beneath the amount input.
+const RECORD_CATEGORIES = [
+  "Groceries", "Dining", "Gas", "Coffee", "Subscriptions",
+  "Shopping", "Entertainment", "Transit", "Bills", "Health",
+  "Travel", "Other",
+];
+
+function todayISO_() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// Tiny pretty-print "May 24, 2026" / "Today" / "Yesterday" / "May 22 (Sun)"
+function formatDayHeader(iso) {
+  if (!iso) return "—";
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
+  const isToday = dt.getTime() === today.getTime();
+  const isYesterday = dt.getTime() === yesterday.getTime();
+  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const DAYS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  const stamp = `${MONTHS[dt.getMonth()]} ${dt.getDate()}` + (dt.getFullYear() !== today.getFullYear() ? `, ${dt.getFullYear()}` : "");
+  if (isToday) return `Today — ${stamp}`;
+  if (isYesterday) return `Yesterday — ${stamp}`;
+  return `${stamp} (${DAYS[dt.getDay()]})`;
+}
+
+// ─── Entry form ──────────────────────────────────────────────────────────
+function RecordEntryForm({ editing, onCancelEdit }) {
+  // Local string state for the amount field so we can validate before parsing.
+  const [amountStr, setAmountStr] = useStateRec("");
+  const [category, setCategory] = useStateRec("Groceries");
+  const [date, setDate] = useStateRec(todayISO_);
+  const [note, setNote] = useStateRec("");
+  const [error, setError] = useStateRec("");
+  const amountRef = useRefRec(null);
+
+  // Hydrate the form when "editing" target changes
+  useEffectRec(() => {
+    if (editing) {
+      setAmountStr(window.toDollars(editing.amount_cents).toFixed(2));
+      setCategory(editing.category || "Groceries");
+      setDate(editing.date || todayISO_());
+      setNote(editing.note || "");
+      setError("");
+    }
+  }, [editing && editing.id]);
+
+  const reset = () => {
+    setAmountStr("");
+    setCategory("Groceries");
+    setDate(todayISO_());
+    setNote("");
+    setError("");
+  };
+
+  const submit = (e) => {
+    e?.preventDefault?.();
+    // Validate amount: must be a positive number > 0
+    const trimmed = String(amountStr).trim();
+    if (trimmed === "") {
+      setError("Amount is required.");
+      amountRef.current?.focus();
+      return;
+    }
+    // Strip any non-numeric (allow leading $, commas, decimal)
+    const cleaned = trimmed.replace(/[^0-9.\-]/g, "");
+    const n = Number(cleaned);
+    if (!isFinite(n) || isNaN(n)) {
+      setError("Amount must be a number.");
+      amountRef.current?.focus();
+      return;
+    }
+    if (n < 0) {
+      setError("Amount can't be negative.");
+      amountRef.current?.focus();
+      return;
+    }
+    if (n === 0) {
+      setError("Amount must be greater than $0.");
+      amountRef.current?.focus();
+      return;
+    }
+    const cents = window.toCents(n);
+    if (cents <= 0 || !isFinite(cents)) {
+      setError("Amount is invalid.");
+      return;
+    }
+
+    if (editing) {
+      window.Transactions.edit(editing.id, {
+        amount_cents: cents,
+        category: (category || "Other").trim(),
+        date,
+        note: note.trim(),
+      });
+      onCancelEdit && onCancelEdit();
+    } else {
+      window.Transactions.add({
+        amount_cents: cents,
+        category: (category || "Other").trim(),
+        date,
+        note: note.trim(),
+      });
+    }
+    reset();
+  };
+
+  const showCancel = !!editing;
+
+  return (
+    <section className="card">
+      <header className="card-head">
+        <h2>{editing ? "Edit entry" : "New entry"}</h2>
+        {window.AutoSaveIndicator && (
+          <window.AutoSaveIndicator value={[amountStr, category, date, note]} />
+        )}
+      </header>
+      <div className="card-body">
+        <form onSubmit={submit} noValidate>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+            <Field label="Amount" hint={error ? <span style={{color:"var(--negative)"}}>{error}</span> : "what did you spend?"}>
+              <div className="money-input">
+                <span className="money-prefix">$</span>
+                <input
+                  ref={amountRef}
+                  type="text"
+                  inputMode="decimal"
+                  value={amountStr}
+                  onChange={(e) => { setAmountStr(e.target.value); if (error) setError(""); }}
+                  placeholder="0.00"
+                  aria-invalid={!!error}
+                />
+              </div>
+            </Field>
+            <Field label="Category" hint="what was it for?">
+              <input
+                type="text"
+                className="text-input"
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                list="record-cat-list"
+                placeholder="Groceries"
+              />
+              <datalist id="record-cat-list">
+                {RECORD_CATEGORIES.map((c) => <option key={c} value={c} />)}
+              </datalist>
+            </Field>
+            <Field label="Date" hint="when?">
+              <input
+                type="date"
+                className="text-input"
+                value={date}
+                onChange={(e) => setDate(e.target.value || todayISO_())}
+                max={todayISO_()}
+              />
+            </Field>
+          </div>
+
+          <Field label="Note" hint="optional · 500 chars max">
+            <input
+              type="text"
+              className="text-input"
+              value={note}
+              onChange={(e) => setNote(e.target.value.slice(0, 500))}
+              placeholder="e.g. weekly Whole Foods run"
+            />
+          </Field>
+
+          {/* Quick-add category chips */}
+          <div className="port-presets" style={{ marginTop: 10, marginBottom: 14 }}>
+            {RECORD_CATEGORIES.map((c) => (
+              <button
+                key={c}
+                type="button"
+                className={"port-preset-btn" + (category === c ? " is-active" : "")}
+                style={category === c ? { background: "var(--accent-bg)", borderColor: "var(--accent)" } : {}}
+                onClick={() => setCategory(c)}
+              >{c}</button>
+            ))}
+          </div>
+
+          <div style={{ display: "flex", gap: 10 }}>
+            <button type="submit" className="btn-primary">
+              {editing ? "Save changes" : "Add entry"}
+            </button>
+            {showCancel && (
+              <button type="button" className="btn-ghost" onClick={() => { onCancelEdit && onCancelEdit(); reset(); }}>
+                Cancel
+              </button>
+            )}
+          </div>
+        </form>
+      </div>
+    </section>
+  );
+}
+
+// ─── Timeline list ───────────────────────────────────────────────────────
+function RecordTimeline({ transactions, onEdit, onDelete }) {
+  if (!transactions || transactions.length === 0) {
+    return (
+      <section className="card">
+        <header className="card-head"><h2>Timeline</h2></header>
+        <div className="card-body">
+          <div className="port-empty">
+            No entries yet. Add your first expense above ↑
+          </div>
+        </div>
+      </section>
+    );
+  }
+  const days = window.Transactions.byDay(transactions);
+  return (
+    <section className="card">
+      <header className="card-head">
+        <h2>Timeline</h2>
+        <span className="card-tag">
+          {transactions.length} entr{transactions.length === 1 ? "y" : "ies"} · {fmtUSD0(window.toDollars(window.Transactions.totalCents(transactions)))} total
+        </span>
+      </header>
+      <div className="card-body" style={{ padding: 0 }}>
+        {days.map((day) => (
+          <div key={day.date} className="record-day">
+            <div className="record-day-head">
+              <div className="record-day-date">{formatDayHeader(day.date)}</div>
+              <div className="record-day-total">{fmtUSD0(window.toDollars(day.total_cents))}</div>
+            </div>
+            {day.items.map((tx) => (
+              <div key={tx.id} className="record-item">
+                <div className="record-item-main">
+                  <span className="record-item-category">{tx.category}</span>
+                  {tx.note && <span className="record-item-note"> · {tx.note}</span>}
+                </div>
+                <div className="record-item-amount">
+                  {fmtUSD0(window.toDollars(tx.amount_cents))}
+                </div>
+                <div className="record-item-actions">
+                  <button className="btn-link" onClick={() => onEdit(tx)} title="Edit">edit</button>
+                  <button className="btn-link record-item-delete"
+                    onClick={() => {
+                      if (window.confirm(`Delete this $${window.toDollars(tx.amount_cents).toFixed(2)} ${tx.category} entry?`)) {
+                        onDelete(tx.id);
+                      }
+                    }}
+                    title="Delete">delete</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+// ─── Top-level tab component ─────────────────────────────────────────────
+function RecordTab() {
+  const transactions = window.useTransactions();
+  const [editing, setEditing] = useStateRec(null);
+
+  return (
+    <>
+      <header className="page-head">
+        <div>
+          <h1 className="page-title">Record</h1>
+        </div>
+        <div className="page-head-right">
+          <div className="page-sub">
+            Log actual spending · the only data-entry surface for transactions · auto-saves
+          </div>
+        </div>
+      </header>
+
+      <RecordEntryForm
+        editing={editing}
+        onCancelEdit={() => setEditing(null)}
+      />
+
+      <RecordTimeline
+        transactions={transactions}
+        onEdit={(tx) => { setEditing(tx); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+        onDelete={(id) => {
+          if (editing && editing.id === id) setEditing(null);
+          window.Transactions.remove(id);
+        }}
+      />
+    </>
+  );
+}
+
+window.RecordTab = RecordTab;
+
+</script>
+
+<script type="text/babel" data-presets="react">
 // Overview — consolidated summary pulling from Budget, Auto, Debt, Investing, Household.
 const { useState: useStateOv, useMemo: useMemoOv, useEffect: useEffectOv } = React;
 
@@ -19092,6 +19498,7 @@ const CALCULATORS = [
   { id: "tax",       label: "Tax estimator",         glyph: "T" },
   { id: "auto",      label: "Auto & vehicle",        glyph: "A" },
   { id: "debt",      label: "Debt payoff",           glyph: "D" },
+  { id: "record",    label: "Record",                glyph: "R" },
   { id: "admin",     label: "Admin",                 glyph: "⚙" },
 ];
 
@@ -19179,6 +19586,7 @@ function App() {
       case "tax":       return <TaxEstimator    profile={profile} setProfile={setProfile} />;
       case "auto":      return <AutoLoan getBudgetData={() => window.__ledgerData} />;
       case "debt":      return <DebtPayoff getBudgetData={() => window.__ledgerData} />;
+      case "record":    return window.RecordTab ? <window.RecordTab /> : null;
       case "overview":  return <OverviewCalculator profile={profile} getBudgetData={() => window.__ledgerData} />;
       case "admin":     return AdminC ? <AdminC /> : null;
       default:          return null;
