@@ -7731,10 +7731,133 @@ window.CurrentSummary = CurrentSummary;
 // just wrapped in the v2 page chrome. Pulls window.useTransactions and
 // window.CurrentSummary (both exposed from calc-record.jsx). No data entry,
 // no writes — Record is the only entry surface.
+//
+// Also displays a "Fixed monthly load" card derived from the v1 Debt tab's
+// ledger:debt data when it exists. Per the original v2 spec, debt minimums
+// should be visible as a rigid, high-priority fixed cost line so the user
+// sees what cash flow remains for savings. Reading happens through the same
+// auth.jsx namespace shim that both apps use, so the per-user :debt key is
+// resolved transparently — no extra plumbing.
+
+const { useState: useStateV2C, useEffect: useEffectV2C } = React;
+
+// Shared snapshot reader for the v1 Debt tab's ledger:debt data.
+// Exposed on window so v2-projection.jsx can roll monthly minimums into
+// the recurring overhead forecast without duplicating the read logic.
+function readDebtSnapshot() {
+  try {
+    const raw = localStorage.getItem("ledger:debt");
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const debts = Array.isArray(parsed?.debts) ? parsed.debts : [];
+    if (debts.length === 0) return null;
+    const minTotal = debts.reduce((a, d) => a + (Number(d?.minPayment) || 0), 0);
+    const principalTotal = debts.reduce((a, d) => a + (Number(d?.balance) || 0), 0);
+    return {
+      debts: debts.map((d) => ({
+        name: String(d?.name || "Debt").trim() || "Debt",
+        balance: Number(d?.balance) || 0,
+        apr: Number(d?.apr) || 0,
+        minPayment: Number(d?.minPayment) || 0,
+      })),
+      minTotal,
+      principalTotal,
+    };
+  } catch { return null; }
+}
+window.readDebtSnapshot = readDebtSnapshot;
+
+function useDebtSnapshot() {
+  const [snapshot, setSnapshot] = useStateV2C(readDebtSnapshot);
+
+  useEffectV2C(() => {
+    // Re-read on cross-tab storage changes (when v1 updates debts in another tab)
+    // and poll at 2s so same-tab v1 changes also propagate (there's no fine-grained
+    // event for ledger:debt; the poll is cheap and stops re-rendering when the
+    // snapshot is structurally identical because React bails on referential equality).
+    const onChange = () => setSnapshot(readDebtSnapshot());
+    window.addEventListener("storage", onChange);
+    const id = setInterval(() => {
+      const next = readDebtSnapshot();
+      setSnapshot((prev) => {
+        // Bail if functionally identical to avoid useless re-renders.
+        if (prev === next) return prev;
+        if (!prev && !next) return prev;
+        if (prev && next && prev.minTotal === next.minTotal && prev.principalTotal === next.principalTotal && prev.debts.length === next.debts.length) {
+          return prev;
+        }
+        return next;
+      });
+    }, 2000);
+    return () => {
+      window.removeEventListener("storage", onChange);
+      clearInterval(id);
+    };
+  }, []);
+
+  return snapshot;
+}
+window.useDebtSnapshot = useDebtSnapshot;
+
+function V2FixedLoadCard({ debt }) {
+  const fmt = (n) => window.fmtUSD0(n);
+  return (
+    <section className="card">
+      <header className="card-head">
+        <h2>Fixed monthly load</h2>
+        <span className="card-tag">contractual minimums · synced from /v1/#debt</span>
+      </header>
+      <div className="card-body">
+        <div className="kpi-grid">
+          <div className="kpi">
+            <div className="kpi-label">Monthly minimums</div>
+            <div className="kpi-value" style={{ color: "var(--negative)" }}>{fmt(debt.minTotal)}</div>
+            <div className="kpi-sub">{debt.debts.length} debt{debt.debts.length === 1 ? "" : "s"}</div>
+          </div>
+          <div className="kpi">
+            <div className="kpi-label">Principal owed</div>
+            <div className="kpi-value">{fmt(debt.principalTotal)}</div>
+            <div className="kpi-sub">across all balances</div>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 14, overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", padding: "6px 10px", borderBottom: "1px solid var(--border)", color: "var(--ink-3)", fontWeight: 500 }}>Debt</th>
+                <th style={{ textAlign: "right", padding: "6px 10px", borderBottom: "1px solid var(--border)", color: "var(--ink-3)", fontWeight: 500 }}>APR</th>
+                <th style={{ textAlign: "right", padding: "6px 10px", borderBottom: "1px solid var(--border)", color: "var(--ink-3)", fontWeight: 500 }}>Balance</th>
+                <th style={{ textAlign: "right", padding: "6px 10px", borderBottom: "1px solid var(--border)", color: "var(--ink-3)", fontWeight: 500 }}>Min / mo</th>
+              </tr>
+            </thead>
+            <tbody>
+              {debt.debts.map((d, i) => (
+                <tr key={i}>
+                  <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--border)" }}>{d.name}</td>
+                  <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--border)", textAlign: "right" }}>{(d.apr * 100).toFixed(2)}%</td>
+                  <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--border)", textAlign: "right" }}>{fmt(d.balance)}</td>
+                  <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--border)", textAlign: "right", color: "var(--negative)", fontWeight: 600 }}>{fmt(d.minPayment)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <p style={{ marginTop: 12, fontSize: 12, color: "var(--ink-4)" }}>
+          Edit balances and minimums in the{" "}
+          <a href="v1/#debt" style={{ color: "var(--accent)" }}>full calculator's Debt tab</a>.
+          Changes appear here automatically.
+        </p>
+      </div>
+    </section>
+  );
+}
 
 function V2Current() {
   const transactions = window.useTransactions();
   const CS = window.CurrentSummary;
+  const debt = useDebtSnapshot();
 
   // Tiny "tip strip" so a brand-new user lands here and knows where to go.
   const isEmpty = !transactions || transactions.length === 0;
@@ -7764,6 +7887,8 @@ function V2Current() {
           </div>
         </section>
       )}
+
+      {debt ? <V2FixedLoadCard debt={debt} /> : null}
 
       {CS ? <CS transactions={transactions} /> : null}
     </>
@@ -7808,6 +7933,10 @@ const MONTHS_SHORT_V2 = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","
 
 function V2Projection() {
   const transactions = window.useTransactions();
+  // Debt minimums are contractual recurring overhead — fold them into the
+  // recurring forecast alongside Subscriptions/Bills per v2 spec Step 6.
+  const debtSnap = window.useDebtSnapshot ? window.useDebtSnapshot() : null;
+  const debtMinPerMonth = debtSnap ? debtSnap.minTotal : 0;
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -7817,8 +7946,27 @@ function V2Projection() {
   // days of data exist, we widen to "all data" so a brand-new user still
   // gets some signal. ───────────────────────────────────────────────────
   const stats = useMemoV2P(() => {
-    if (!transactions || transactions.length === 0) {
+    // Even with zero transactions, we still have meaningful data if v1 has
+    // debts set up — show a debt-only projection in that case rather than the
+    // generic empty state.
+    if ((!transactions || transactions.length === 0) && debtMinPerMonth <= 0) {
       return { hasData: false, days: 0, recurringPerMonth: 0, variablePerDay: 0, dailyAvg: 0 };
+    }
+    if (!transactions || transactions.length === 0) {
+      // Debt-only case — no transaction history, but contractual debt load exists.
+      return {
+        hasData: true,
+        days: 0,
+        totalDaysOfData: 0,
+        recurringPerMonth: debtMinPerMonth,
+        variablePerDay: 0,
+        dailyAvg: debtMinPerMonth / 30,
+        windowRecurring: 0,
+        windowVariable: 0,
+        debtFromV1: debtMinPerMonth,
+        recurringFromTx: 0,
+        debtOnly: true,
+      };
     }
 
     // Find earliest date with data
@@ -7847,9 +7995,16 @@ function V2Projection() {
       else variableCents += cents;
     }
 
-    // Recurring scaled to a 30-day month (best estimate from the window).
-    const recurringPerMonth = (recurringCents / windowDays) * 30;
+    // Recurring scaled to a 30-day month (best estimate from the window),
+    // plus the v1 Debt tab's contractual monthly minimums layered on top —
+    // those are fixed cash outflows the user is committed to, even if no
+    // transaction has been logged for them yet on Record.
+    const recurringFromTx = (recurringCents / windowDays) * 30;
+    const recurringPerMonth = recurringFromTx + debtMinPerMonth;
     const variablePerDay = variableCents / windowDays;
+    // Daily average still uses observed cash flow — the debt minimum is
+    // counted via recurringPerMonth and would double-count if we added cents
+    // to dailyAvg directly. Surface it separately in the methodology line.
     const dailyAvg = (recurringCents + variableCents) / windowDays;
 
     return {
@@ -7857,12 +8012,15 @@ function V2Projection() {
       days: windowDays,
       totalDaysOfData,
       recurringPerMonth,
+      recurringFromTx,
+      debtFromV1: debtMinPerMonth,
       variablePerDay,
       dailyAvg,
       windowRecurring: recurringCents,
       windowVariable: variableCents,
+      debtOnly: false,
     };
-  }, [transactions, todayISO]);
+  }, [transactions, todayISO, debtMinPerMonth]);
 
   // ── Calendar-anchored monthly buckets ─────────────────────────────────
   // Start with NEXT calendar month (so the chart projects forward only) and
@@ -7936,8 +8094,10 @@ function V2Projection() {
             <p style={{ margin: 0, color: "var(--ink-3)" }}>
               Add a few transactions on the{" "}
               <a href="#record" style={{ color: "var(--accent)" }}>Record</a>{" "}
-              tab and this page will start projecting where your spending is
-              headed. You need at least a week of data for a useful forecast.
+              tab — or set up debts in the{" "}
+              <a href="v1/#debt" style={{ color: "var(--accent)" }}>full calculator's Debt tab</a>{" "}
+              — and this page will start projecting where your spending is
+              headed. A week of recorded spend gives the most useful forecast.
             </p>
           </div>
         </section>
@@ -7977,7 +8137,11 @@ function V2Projection() {
             <div className="kpi">
               <div className="kpi-label">Recurring / month</div>
               <div className="kpi-value">{fmt(stats.recurringPerMonth)}</div>
-              <div className="kpi-sub">subscriptions, bills, rent</div>
+              <div className="kpi-sub">
+                {stats.debtFromV1 > 0
+                  ? `incl. ${fmt(stats.debtFromV1)} debt minimums from v1`
+                  : "subscriptions, bills, rent"}
+              </div>
             </div>
             <div className="kpi">
               <div className="kpi-label">Variable / day</div>
@@ -8080,13 +8244,26 @@ function V2Projection() {
           ) : null}
 
           <p style={{ marginTop: 12, fontSize: 13, color: "var(--ink-3)" }}>
-            Methodology: recurring costs are held flat at your observed
-            monthly rate ({fmt(stats.recurringPerMonth)}/mo from the last
-            {" "}{stats.days} day{stats.days === 1 ? "" : "s"}). Variable spend
-            is projected at {fmt(stats.variablePerDay)}/day with a ±25% band
-            to reflect week-to-week swings (groceries, gas, dining). Each
-            month's variable total scales with its actual number of days, so
-            short months like February forecast lower than 31-day months.
+            Methodology: recurring costs are held flat at{" "}
+            {fmt(stats.recurringPerMonth)}/mo
+            {stats.debtFromV1 > 0 && stats.recurringFromTx > 0 && (
+              <> (
+                {fmt(stats.recurringFromTx)} from your last {stats.days}{" "}
+                day{stats.days === 1 ? "" : "s"} of recorded recurring spend +{" "}
+                {fmt(stats.debtFromV1)} debt minimums from the v1 Debt tab
+              )</>
+            )}
+            {stats.debtFromV1 > 0 && stats.recurringFromTx === 0 && (
+              <> (entirely from {fmt(stats.debtFromV1)} debt minimums in the v1 Debt tab — no recurring tags on your Record entries yet)</>
+            )}
+            {stats.debtFromV1 === 0 && stats.days > 0 && (
+              <> (from the last {stats.days} day{stats.days === 1 ? "" : "s"} of recorded spend)</>
+            )}
+            . Variable spend is projected at {fmt(stats.variablePerDay)}/day
+            with a ±25% band to reflect week-to-week swings (groceries, gas,
+            dining). Each month's variable total scales with its actual
+            number of days, so short months like February forecast lower
+            than 31-day months.
           </p>
 
           <div style={{ overflowX: "auto", marginTop: 16 }}>
