@@ -7150,6 +7150,180 @@ Object.assign(window, {
 </script>
 
 <script type="text/babel" data-presets="react">
+// Transactions data module.
+//
+// THE ONLY code in the app that touches the `ledger:transactions` key.
+// Other tabs (Record, Current summary) consume via getAll() and mutate via
+// add() / edit() / remove(). The persistent format is an array of:
+//   { id, amount_cents, category, date, note }
+//     id            — stable unique integer (timestamp-derived)
+//     amount_cents  — INTEGER cents (use window.toCents to convert from dollars)
+//     category      — short string ("Groceries", "Gas", …)
+//     date          — ISO "YYYY-MM-DD"
+//     note          — optional string
+//
+// Persistence: localStorage. The auth.jsx namespace shim transparently
+// rewrites the key to ledger:u:{email}:transactions, and the Firestore
+// mirror in firebase-sync.jsx pushes it to users/{uid}/data/transactions
+// on every write — so cross-device sync via Google sign-in is automatic.
+//
+// Reactivity: every write dispatches a `ledger:transactions:changed`
+// CustomEvent on window. Consumers subscribe via the React hook below
+// (useTransactions) so they re-render when the data changes — including
+// when a different browser tab in the same session writes.
+
+(function buildTransactionsModule() {
+  const KEY = "ledger:transactions";
+  const EVT = "ledger:transactions:changed";
+
+  // ── Internal read/write — only these two touch localStorage ──
+  function _readRaw() {
+    try {
+      const raw = localStorage.getItem(KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch { return []; }
+  }
+  function _writeRaw(list) {
+    try {
+      localStorage.setItem(KEY, JSON.stringify(list));
+      // Fire on next tick so React state update completes first
+      setTimeout(() => window.dispatchEvent(new CustomEvent(EVT, { detail: list })), 0);
+    } catch (e) {
+      console.warn("[transactions] write failed:", e.message);
+    }
+  }
+
+  // ── Validation ──
+  function _normalize(rec) {
+    const id = (rec && rec.id) || Date.now() + Math.floor(Math.random() * 1000);
+    const amount_cents = Math.max(0, Math.round(Number(rec?.amount_cents) || 0));
+    const category = String(rec?.category || "Uncategorized").trim() || "Uncategorized";
+    const date = (() => {
+      const d = rec?.date;
+      if (typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+      // Default to today (local timezone — matches Auto/Debt date defaults)
+      const t = new Date();
+      return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
+    })();
+    const note = rec?.note ? String(rec.note).slice(0, 500) : "";
+    return { id, amount_cents, category, date, note };
+  }
+
+  // ── Public API ──
+  const Transactions = {
+    /** Returns the full transaction list (a fresh array — safe to mutate the copy). */
+    getAll() {
+      return _readRaw().slice();
+    },
+
+    /** Add one transaction. Returns the normalized record (with generated id). */
+    add(rec) {
+      const list = _readRaw();
+      const next = _normalize(rec);
+      list.push(next);
+      _writeRaw(list);
+      return next;
+    },
+
+    /** Patch an existing transaction by id. Returns updated record or null if not found. */
+    edit(id, patch) {
+      const list = _readRaw();
+      const idx = list.findIndex((t) => t.id === id);
+      if (idx === -1) return null;
+      const merged = _normalize({ ...list[idx], ...patch, id: list[idx].id });
+      list[idx] = merged;
+      _writeRaw(list);
+      return merged;
+    },
+
+    /** Delete by id. Returns true if anything was removed. */
+    remove(id) {
+      const list = _readRaw();
+      const next = list.filter((t) => t.id !== id);
+      if (next.length === list.length) return false;
+      _writeRaw(next);
+      return true;
+    },
+
+    /** Replace the entire list (used by tests + future bulk-import). */
+    _setAll(list) {
+      _writeRaw(Array.isArray(list) ? list.map(_normalize) : []);
+    },
+
+    EVT_CHANGED: EVT,
+  };
+
+  window.Transactions = Transactions;
+
+  // ── Pure analytics helpers (read-only) ──
+  // Not part of the storage API — these compute derived views from a list.
+  // Keeping them on the module so Current/Projection consume one canonical source.
+  Transactions.totalCents = function (list) {
+    if (!Array.isArray(list)) return 0;
+    return list.reduce((a, t) => a + (Number(t?.amount_cents) || 0), 0);
+  };
+
+  Transactions.byCategory = function (list) {
+    const out = {};
+    if (!Array.isArray(list)) return out;
+    for (const t of list) {
+      const cat = t?.category || "Uncategorized";
+      out[cat] = (out[cat] || 0) + (Number(t?.amount_cents) || 0);
+    }
+    return out;
+  };
+
+  Transactions.byDay = function (list) {
+    const map = new Map();
+    if (!Array.isArray(list)) return [];
+    for (const t of list) {
+      const day = t?.date || "0000-00-00";
+      if (!map.has(day)) map.set(day, { date: day, total_cents: 0, items: [] });
+      const bucket = map.get(day);
+      bucket.items.push(t);
+      bucket.total_cents += Number(t?.amount_cents) || 0;
+    }
+    // Newest day first
+    return Array.from(map.values()).sort((a, b) => (a.date < b.date ? 1 : -1));
+  };
+
+  Transactions.monthTotalCents = function (list, yyyyMm) {
+    if (!Array.isArray(list) || !yyyyMm) return 0;
+    return list.reduce((a, t) =>
+      (t?.date || "").startsWith(yyyyMm) ? a + (Number(t?.amount_cents) || 0) : a, 0);
+  };
+})();
+
+// ── React hook ───────────────────────────────────────────────────────────
+// Subscribes a component to transaction-list changes. Returns the current
+// list and re-renders whenever any add/edit/remove fires.
+const { useState: useStateTx, useEffect: useEffectTx, useCallback: useCallbackTx } = React;
+
+function useTransactions() {
+  const [list, setList] = useStateTx(() => window.Transactions.getAll());
+  useEffectTx(() => {
+    const handler = () => setList(window.Transactions.getAll());
+    window.addEventListener(window.Transactions.EVT_CHANGED, handler);
+    // Also re-read on storage events (other tabs in the same browser)
+    const storageHandler = (e) => {
+      if (e.key && e.key.endsWith(":transactions")) setList(window.Transactions.getAll());
+    };
+    window.addEventListener("storage", storageHandler);
+    return () => {
+      window.removeEventListener(window.Transactions.EVT_CHANGED, handler);
+      window.removeEventListener("storage", storageHandler);
+    };
+  }, []);
+  return list;
+}
+
+window.useTransactions = useTransactions;
+
+</script>
+
+<script type="text/babel" data-presets="react">
 
 // tweaks-panel.jsx
 // Reusable Tweaks shell + form-control helpers.
@@ -17567,6 +17741,41 @@ window.MonteCarloCard = MonteCarloCard;
       assert(!r.ok, "expected ok:false for negative spent");
     });
   }
+
+  // ── Transactions module (data layer for the Record tab) ─────────────
+  t("Transactions: totalCents empty list → 0", () => {
+    assert(window.Transactions.totalCents([]) === 0, "expected 0");
+    assert(window.Transactions.totalCents(null) === 0, "expected 0 for null");
+    assert(window.Transactions.totalCents(undefined) === 0, "expected 0 for undefined");
+  });
+  t("Transactions: totalCents sums a single entry", () => {
+    const r = window.Transactions.totalCents([{ amount_cents: 1234 }]);
+    assert(r === 1234, "expected 1234, got " + r);
+  });
+  t("Transactions: byDay groups + per-day subtotal", () => {
+    const txs = [
+      { id: 1, amount_cents: 500,  category: "Coffee",    date: "2026-05-24" },
+      { id: 2, amount_cents: 1200, category: "Lunch",     date: "2026-05-24" },
+      { id: 3, amount_cents: 8000, category: "Groceries", date: "2026-05-23" },
+    ];
+    const groups = window.Transactions.byDay(txs);
+    assert(groups.length === 2, "expected 2 day buckets, got " + groups.length);
+    // Newest first
+    assert(groups[0].date === "2026-05-24", "expected first bucket = 2026-05-24");
+    assert(groups[0].total_cents === 1700, "expected first total 1700, got " + groups[0].total_cents);
+    assert(groups[0].items.length === 2, "expected 2 items in first bucket");
+    assert(groups[1].total_cents === 8000, "expected second total 8000");
+  });
+  t("Transactions: monthTotalCents filters by YYYY-MM prefix", () => {
+    const txs = [
+      { amount_cents: 100, date: "2026-05-01" },
+      { amount_cents: 200, date: "2026-05-31" },
+      { amount_cents: 999, date: "2026-06-01" }, // different month
+    ];
+    assert(window.Transactions.monthTotalCents(txs, "2026-05") === 300, "expected 300");
+    assert(window.Transactions.monthTotalCents(txs, "2026-06") === 999, "expected 999");
+    assert(window.Transactions.monthTotalCents(txs, "2027-01") === 0,   "expected 0");
+  });
 
   // Runner — returns array of { name, pass, error? }
   window.runMathTests = function runMathTests() {
