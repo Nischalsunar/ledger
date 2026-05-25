@@ -16081,9 +16081,43 @@ function CurrentSummary({ transactions }) {
 }
 
 // ─── Top-level tab component ─────────────────────────────────────────────
+// CSV export — pure client-side; uses Blob + ObjectURL so no server roundtrip.
+// Quoting follows RFC 4180: wrap any field that contains commas, quotes, or
+// newlines in double quotes, and double up any embedded quotes inside.
+function exportTransactionsCSV(transactions) {
+  const csvEscape = (val) => {
+    const s = val == null ? "" : String(val);
+    if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+    return s;
+  };
+  const header = ["date", "category", "amount_dollars", "note"].join(",");
+  // Sort newest-first for readability when opened in Excel/Sheets
+  const rows = [...(transactions || [])]
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
+    .map((t) => [
+      csvEscape(t.date || ""),
+      csvEscape(t.category || ""),
+      // Dollar amount with 2dp — converted from amount_cents to keep precision
+      (window.toDollars(Number(t.amount_cents) || 0)).toFixed(2),
+      csvEscape(t.note || ""),
+    ].join(","));
+  const csv = [header, ...rows].join("\r\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const today = new Date();
+  const stamp = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  a.href = url;
+  a.download = `ledger-transactions-${stamp}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 0);
+}
+
 function RecordTab({ hideSummary, hideHeader } = {}) {
   const transactions = window.useTransactions();
   const [editing, setEditing] = useStateRec(null);
+  const canExport = (transactions || []).length > 0;
 
   return (
     <>
@@ -16096,8 +16130,48 @@ function RecordTab({ hideSummary, hideHeader } = {}) {
             <div className="page-sub">
               Log actual spending · the only data-entry surface for transactions · auto-saves
             </div>
+            <div style={{ marginTop: 8 }}>
+              <button
+                type="button"
+                onClick={() => exportTransactionsCSV(transactions)}
+                disabled={!canExport}
+                title={canExport ? "Download all logged transactions as CSV" : "No transactions to export yet"}
+                style={{
+                  fontSize: 12,
+                  padding: "6px 12px",
+                  border: "1px solid var(--border)",
+                  background: canExport ? "var(--surface)" : "var(--surface-2)",
+                  color: canExport ? "var(--ink-2)" : "var(--ink-4)",
+                  borderRadius: 4,
+                  cursor: canExport ? "pointer" : "not-allowed",
+                }}
+              >
+                Export CSV ({(transactions || []).length})
+              </button>
+            </div>
           </div>
         </header>
+      )}
+      {hideHeader && canExport && (
+        // v2 hides the page header; surface the export as a small toolbar above the form.
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+          <button
+            type="button"
+            onClick={() => exportTransactionsCSV(transactions)}
+            title="Download all logged transactions as CSV"
+            style={{
+              fontSize: 12,
+              padding: "6px 12px",
+              border: "1px solid var(--border)",
+              background: "var(--surface)",
+              color: "var(--ink-2)",
+              borderRadius: 4,
+              cursor: "pointer",
+            }}
+          >
+            Export CSV ({transactions.length})
+          </button>
+        </div>
       )}
 
       {!hideSummary && <CurrentSummary transactions={transactions} />}
@@ -18482,6 +18556,21 @@ window.MonteCarloCard = MonteCarloCard;
     assert(window.Transactions.monthTotalCents(txs, "2026-05") === 300, "expected 300");
     assert(window.Transactions.monthTotalCents(txs, "2026-06") === 999, "expected 999");
     assert(window.Transactions.monthTotalCents(txs, "2027-01") === 0,   "expected 0");
+  });
+
+  // ── CSV export — local helper since the exporter is closure-scoped in calc-record.jsx
+  t("CSV escape: fields with commas, quotes, or newlines are quoted properly", () => {
+    const csvEscape = (val) => {
+      const s = val == null ? "" : String(val);
+      if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+      return s;
+    };
+    assert(csvEscape("plain") === "plain", "plain string passes through");
+    assert(csvEscape("with, comma") === '"with, comma"', "comma triggers quoting");
+    assert(csvEscape('he said "hi"') === '"he said ""hi"""', "embedded quotes doubled");
+    assert(csvEscape("line\nbreak") === '"line\nbreak"', "newline triggers quoting");
+    assert(csvEscape(null) === "", "null becomes empty string");
+    assert(csvEscape(0) === "0", "zero stays as 0 not blank");
   });
 
   // Runner — returns array of { name, pass, error? }
