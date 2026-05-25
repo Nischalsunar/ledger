@@ -5368,6 +5368,65 @@ html[data-color-mode="light"] .date-input { color-scheme: light; }
   border-color: var(--accent-dim);
 }
 
+/* ===== Record tab — category breakdown rows ===== */
+.record-cat-row {
+  display: grid;
+  grid-template-columns: 140px 1fr 80px 40px;
+  gap: 12px;
+  align-items: center;
+  font-size: 13px;
+}
+.record-cat-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.record-cat-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.record-cat-bar-wrap {
+  height: 18px;
+  background: var(--surface-2);
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.record-cat-bar {
+  height: 100%;
+  border-radius: 0;
+  transition: width 240ms ease;
+  min-width: 2px;
+}
+.record-cat-amount {
+  font-family: var(--display);
+  font-feature-settings: "tnum";
+  font-size: 13px;
+  text-align: right;
+  color: var(--ink);
+  font-weight: 500;
+}
+.record-cat-pct {
+  font-family: var(--mono);
+  font-size: 11px;
+  text-align: right;
+  color: var(--ink-3);
+}
+@media (max-width: 640px) {
+  .record-cat-row {
+    grid-template-columns: 100px 1fr 70px;
+  }
+  .record-cat-pct { display: none; }
+}
+
 /* ===== Record tab — timeline of dated transactions ===== */
 .record-day {
   border-top: 1px solid var(--border);
@@ -15784,6 +15843,196 @@ function RecordTimeline({ transactions, onEdit, onDelete }) {
   );
 }
 
+// ─── Current Summary (Step 3) — read-only month overview ─────────────────
+// Lives INSIDE the Record tab, above the entry form. Pure read from the
+// transactions module — no data entry, no storage writes. Recomputes
+// automatically when useTransactions re-fires.
+function CurrentSummary({ transactions }) {
+  const today = new Date();
+  const yyyyMm = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+  const prevMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+  const prevYyyyMm = `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, "0")}`;
+  const MONTHS_LONG = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  const monthLabel = MONTHS_LONG[today.getMonth()];
+  const prevMonthLabel = MONTHS_LONG[prevMonth.getMonth()];
+
+  // This-month entries
+  const thisMonthTxs = useMemoRec(
+    () => (transactions || []).filter((t) => (t.date || "").startsWith(yyyyMm)),
+    [transactions, yyyyMm]
+  );
+  const thisMonthCents = window.Transactions.totalCents(thisMonthTxs);
+  const lastMonthCents = window.Transactions.monthTotalCents(transactions, prevYyyyMm);
+
+  // Per-day total of this month for the chart
+  const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+  const dailyData = useMemoRec(() => {
+    const buckets = new Array(daysInMonth).fill(0);
+    thisMonthTxs.forEach((t) => {
+      const day = parseInt((t.date || "").slice(8, 10), 10);
+      if (day >= 1 && day <= daysInMonth) buckets[day - 1] += (Number(t.amount_cents) || 0);
+    });
+    let cum = 0;
+    return buckets.map((cents, i) => {
+      cum += cents;
+      return {
+        day: i + 1,
+        spent: window.toDollars(cents),
+        cumulative: window.toDollars(cum),
+      };
+    });
+  }, [thisMonthTxs, daysInMonth]);
+
+  // Categories sorted by spend desc
+  const categoryData = useMemoRec(() => {
+    const byCat = window.Transactions.byCategory(thisMonthTxs);
+    return Object.entries(byCat)
+      .map(([category, cents]) => ({
+        category,
+        cents,
+        dollars: window.toDollars(cents),
+        pct: thisMonthCents > 0 ? (cents / thisMonthCents) * 100 : 0,
+      }))
+      .sort((a, b) => b.cents - a.cents);
+  }, [thisMonthTxs, thisMonthCents]);
+
+  // Day-of-month + average so far
+  const dayOfMonth = today.getDate();
+  const avgPerDay = dayOfMonth > 0 ? thisMonthCents / dayOfMonth : 0;
+  const projectedMonth = avgPerDay * daysInMonth;
+
+  // Comparison vs last month — only meaningful if last month had data
+  const deltaCents = thisMonthCents - lastMonthCents;
+  const deltaPct = lastMonthCents > 0 ? (deltaCents / lastMonthCents) * 100 : null;
+
+  const Recharts = window.Recharts;
+  const CAT_COLORS = ["#4DA77A", "#C9A96E", "#5A8FA3", "#B85450", "#7B6E55", "#A07ABE", "#4FB5B0", "#D77662", "#9C7C4B", "#6BC295", "#8B5A3C", "#7A8881"];
+
+  return (
+    <section className="card">
+      <header className="card-head">
+        <h2>This month so far</h2>
+        <span className="card-tag">
+          {monthLabel} {today.getFullYear()} · day {dayOfMonth} of {daysInMonth}
+        </span>
+      </header>
+      <div className="card-body">
+        {/* Empty state */}
+        {thisMonthTxs.length === 0 ? (
+          <div className="port-empty">
+            No entries this month yet. Log your first expense below ↓
+            {lastMonthCents > 0 && (
+              <div style={{ marginTop: 8, fontSize: 12, color: "var(--ink-3)" }}>
+                For reference: you spent <strong>{fmtUSD0(window.toDollars(lastMonthCents))}</strong> last {prevMonthLabel}.
+              </div>
+            )}
+          </div>
+        ) : (
+          <>
+            {/* Four-cell KPI strip */}
+            <div className="invest-breakdown-grid" style={{ marginBottom: 16 }}>
+              <div className="invest-breakdown-cell invest-breakdown-cell-final">
+                <div className="invest-breakdown-label">Spent this month</div>
+                <div className="invest-breakdown-value">{fmtUSD0(window.toDollars(thisMonthCents))}</div>
+                <div className="invest-breakdown-sub">
+                  {thisMonthTxs.length} {thisMonthTxs.length === 1 ? "entry" : "entries"}
+                </div>
+              </div>
+              <div className="invest-breakdown-cell">
+                <div className="invest-breakdown-label">Daily avg</div>
+                <div className="invest-breakdown-value">{fmtUSD0(window.toDollars(avgPerDay))}</div>
+                <div className="invest-breakdown-sub">over {dayOfMonth} day{dayOfMonth === 1 ? "" : "s"}</div>
+              </div>
+              <div className="invest-breakdown-cell">
+                <div className="invest-breakdown-label">Projected month-end</div>
+                <div className="invest-breakdown-value">{fmtUSD0(window.toDollars(projectedMonth))}</div>
+                <div className="invest-breakdown-sub">if pace continues</div>
+              </div>
+              <div className="invest-breakdown-cell">
+                <div className="invest-breakdown-label">vs. last {prevMonthLabel}</div>
+                {lastMonthCents > 0 ? (
+                  <>
+                    <div className={"invest-breakdown-value " + (deltaCents <= 0 ? "pos" : "neg")}>
+                      {deltaCents >= 0 ? "+" : ""}{fmtUSD0(window.toDollars(deltaCents))}
+                    </div>
+                    <div className="invest-breakdown-sub">
+                      {deltaPct !== null && (
+                        <>{deltaPct >= 0 ? "+" : ""}{deltaPct.toFixed(0)}% · last month {fmtUSD0(window.toDollars(lastMonthCents))}</>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="invest-breakdown-value" style={{ color: "var(--ink-3)" }}>—</div>
+                    <div className="invest-breakdown-sub">no entries last month</div>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Daily-spend chart */}
+            {Recharts && (
+              <div style={{ height: 200, marginBottom: 20 }}>
+                <Recharts.ResponsiveContainer width="100%" height="100%">
+                  <Recharts.ComposedChart data={dailyData} margin={{ top: 10, right: 16, left: 4, bottom: 8 }}>
+                    <Recharts.CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
+                    <Recharts.XAxis
+                      dataKey="day"
+                      tick={{ fill: "var(--ink-3)", fontSize: 11 }}
+                      ticks={[1, 5, 10, 15, 20, 25, daysInMonth].filter((d) => d <= daysInMonth)}
+                    />
+                    <Recharts.YAxis
+                      yAxisId="bars"
+                      tick={{ fill: "var(--ink-3)", fontSize: 11 }}
+                      tickFormatter={(v) => v >= 1000 ? `$${(v/1000).toFixed(1)}k` : `$${Math.round(v)}`}
+                      width={50}
+                    />
+                    <Recharts.YAxis
+                      yAxisId="cum"
+                      orientation="right"
+                      tick={{ fill: "var(--ink-3)", fontSize: 11 }}
+                      tickFormatter={(v) => v >= 1000 ? `$${(v/1000).toFixed(1)}k` : `$${Math.round(v)}`}
+                      width={50}
+                    />
+                    <Recharts.Tooltip
+                      contentStyle={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 6, fontSize: 12 }}
+                      formatter={(value, name) => [fmtUSD0(value), name === "spent" ? "Day total" : "Cumulative"]}
+                      labelFormatter={(d) => `${monthLabel} ${d}`}
+                    />
+                    <Recharts.Bar yAxisId="bars" dataKey="spent" fill="var(--accent)" radius={[2, 2, 0, 0]} />
+                    <Recharts.Line yAxisId="cum" type="monotone" dataKey="cumulative" stroke="var(--gold)" strokeWidth={2} dot={false} />
+                  </Recharts.ComposedChart>
+                </Recharts.ResponsiveContainer>
+              </div>
+            )}
+
+            {/* Category breakdown — horizontal bars */}
+            <h3 className="sub-head" style={{ marginTop: 0, marginBottom: 10 }}>By category</h3>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {categoryData.map((c, i) => (
+                <div key={c.category} className="record-cat-row">
+                  <div className="record-cat-label">
+                    <span className="record-cat-dot" style={{ background: CAT_COLORS[i % CAT_COLORS.length] }} />
+                    {c.category}
+                  </div>
+                  <div className="record-cat-bar-wrap">
+                    <div
+                      className="record-cat-bar"
+                      style={{ width: `${c.pct.toFixed(1)}%`, background: CAT_COLORS[i % CAT_COLORS.length] }}
+                    />
+                  </div>
+                  <div className="record-cat-amount">{fmtUSD0(c.dollars)}</div>
+                  <div className="record-cat-pct">{c.pct.toFixed(0)}%</div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
+
 // ─── Top-level tab component ─────────────────────────────────────────────
 function RecordTab() {
   const transactions = window.useTransactions();
@@ -15801,6 +16050,8 @@ function RecordTab() {
           </div>
         </div>
       </header>
+
+      <CurrentSummary transactions={transactions} />
 
       <RecordEntryForm
         editing={editing}
