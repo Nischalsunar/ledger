@@ -6617,6 +6617,219 @@ window.LoginScreen = LoginScreen;
 </script>
 
 <script type="text/babel" data-presets="react">
+// 2025 US tax data — simplified but accurate enough for a personal calculator.
+
+const FEDERAL_BRACKETS_2025 = {
+  single: [
+    [11925,   0.10],
+    [48475,   0.12],
+    [103350,  0.22],
+    [197300,  0.24],
+    [250525,  0.32],
+    [626350,  0.35],
+    [Infinity,0.37],
+  ],
+  married: [
+    [23850,   0.10],
+    [96950,   0.12],
+    [206700,  0.22],
+    [394600,  0.24],
+    [501050,  0.32],
+    [751600,  0.35],
+    [Infinity,0.37],
+  ],
+};
+
+const STANDARD_DEDUCTION_2025 = { single: 15000, married: 30000 };
+
+// FICA: Social Security 6.2% up to wage base; Medicare 1.45% + 0.9% over threshold.
+const SS_RATE = 0.062;
+const SS_WAGE_BASE_2025 = 176100;
+const MEDICARE_RATE = 0.0145;
+const ADDL_MEDICARE_RATE = 0.009;
+const ADDL_MEDICARE_THRESHOLD = { single: 200000, married: 250000 };
+
+// State effective tax rates (approximate, applied to gross income).
+// Sourced from 2024–2025 state schedules; flat where applicable, averaged effective for graduated.
+const STATE_TAX = {
+  AL:0.045, AK:0,    AZ:0.025, AR:0.039, CA:0.080, CO:0.044, CT:0.055, DE:0.058,
+  DC:0.075, FL:0,    GA:0.055, HI:0.072, ID:0.058, IL:0.0495, IN:0.0305, IA:0.038,
+  KS:0.057, KY:0.04, LA:0.034, ME:0.063, MD:0.054, MA:0.05,  MI:0.0425, MN:0.068,
+  MS:0.044, MO:0.047, MT:0.058, NE:0.052, NV:0,    NH:0,    NJ:0.061, NM:0.046,
+  NY:0.065, NC:0.0425, ND:0.019, OH:0.034, OK:0.0475, OR:0.085, PA:0.0307, RI:0.045,
+  SC:0.063, SD:0,    TN:0,    TX:0,    UT:0.0455, VT:0.066, VA:0.0537, WA:0,
+  WV:0.052, WI:0.0565, WY:0,
+};
+
+const STATE_NAMES = {
+  AL:"Alabama", AK:"Alaska", AZ:"Arizona", AR:"Arkansas", CA:"California",
+  CO:"Colorado", CT:"Connecticut", DE:"Delaware", DC:"District of Columbia",
+  FL:"Florida", GA:"Georgia", HI:"Hawaii", ID:"Idaho", IL:"Illinois",
+  IN:"Indiana", IA:"Iowa", KS:"Kansas", KY:"Kentucky", LA:"Louisiana",
+  ME:"Maine", MD:"Maryland", MA:"Massachusetts", MI:"Michigan", MN:"Minnesota",
+  MS:"Mississippi", MO:"Missouri", MT:"Montana", NE:"Nebraska", NV:"Nevada",
+  NH:"New Hampshire", NJ:"New Jersey", NM:"New Mexico", NY:"New York",
+  NC:"North Carolina", ND:"North Dakota", OH:"Ohio", OK:"Oklahoma", OR:"Oregon",
+  PA:"Pennsylvania", RI:"Rhode Island", SC:"South Carolina", SD:"South Dakota",
+  TN:"Tennessee", TX:"Texas", UT:"Utah", VT:"Vermont", VA:"Virginia",
+  WA:"Washington", WV:"West Virginia", WI:"Wisconsin", WY:"Wyoming",
+};
+
+// Cities with notable local income tax. Empty array = no local tax recognized.
+const CITY_LOCAL_TAX = {
+  "new york city":  { rate: 0.038,  label: "NYC local" },
+  "nyc":            { rate: 0.038,  label: "NYC local" },
+  "yonkers":        { rate: 0.0165, label: "Yonkers local" },
+  "philadelphia":   { rate: 0.0375, label: "Philadelphia wage" },
+  "pittsburgh":     { rate: 0.030,  label: "Pittsburgh wage" },
+  "detroit":        { rate: 0.024,  label: "Detroit local" },
+  "san francisco":  { rate: 0,      label: "(no personal city tax)" },
+  "washington":     { rate: 0,      label: "(DC tax in state field)" },
+};
+
+function progressiveTax(taxable, brackets) {
+  let tax = 0;
+  let prev = 0;
+  for (const [cap, rate] of brackets) {
+    if (taxable <= prev) break;
+    const slice = Math.min(taxable, cap) - prev;
+    tax += slice * rate;
+    prev = cap;
+    if (taxable <= cap) break;
+  }
+  return tax;
+}
+
+function computeTaxes({ salary, bonus, additionalIncome, state, city, filing, ficaExempt }) {
+  const baseSalary = Math.max(0, salary);
+  const bonusAmount = Math.max(0, bonus || 0);
+  const extraIncome = Math.max(0, additionalIncome || 0);
+  const gross = baseSalary + bonusAmount + extraIncome;
+  const std = STANDARD_DEDUCTION_2025[filing];
+  const taxable = Math.max(0, gross - std);
+
+  // Federal: regular brackets apply to full taxable income (salary + bonus combined).
+  const federal = progressiveTax(taxable, FEDERAL_BRACKETS_2025[filing]);
+
+  const stateRate = STATE_TAX[state] ?? 0;
+  const stateTax = gross * stateRate;
+
+  const cityKey = (city || "").trim().toLowerCase();
+  const cityInfo = CITY_LOCAL_TAX[cityKey];
+  const cityRate = cityInfo?.rate ?? 0;
+  const cityTax = gross * cityRate;
+
+  // FICA — exempt for non-resident F-1/J-1/M-1/Q-1 status (IRC §3121(b)(19)).
+  let ss = 0, medicare = 0, addlMedicare = 0;
+  if (!ficaExempt) {
+    ss = Math.min(gross, SS_WAGE_BASE_2025) * SS_RATE;
+    medicare = gross * MEDICARE_RATE;
+    addlMedicare = Math.max(0, gross - ADDL_MEDICARE_THRESHOLD[filing]) * ADDL_MEDICARE_RATE;
+  }
+  const fica = ss + medicare + addlMedicare;
+
+  const totalTax = federal + stateTax + cityTax + fica;
+  const takeHome = gross - totalTax;
+  const effectiveRate = gross > 0 ? totalTax / gross : 0;
+
+  return {
+    gross, salary: baseSalary, bonus: bonusAmount, additionalIncome: extraIncome,
+    taxable, standardDeduction: std,
+    federal, stateTax, stateRate, cityTax, cityRate, cityLabel: cityInfo?.label,
+    fica, ss, medicare, addlMedicare, ficaExempt: !!ficaExempt,
+    totalTax, takeHome, effectiveRate,
+  };
+}
+
+Object.assign(window, {
+  FEDERAL_BRACKETS_2025, STATE_TAX, STATE_NAMES, CITY_LOCAL_TAX,
+  computeTaxes, progressiveTax,
+});
+
+</script>
+
+<script type="text/babel" data-presets="react">
+// Top ~250 US cities by population, with state codes.
+// Used by the city autocomplete in Budget and Tax calculators.
+const US_CITIES = [
+  ["New York City","NY"],["Los Angeles","CA"],["Chicago","IL"],["Houston","TX"],
+  ["Phoenix","AZ"],["Philadelphia","PA"],["San Antonio","TX"],["San Diego","CA"],
+  ["Dallas","TX"],["Austin","TX"],["San Jose","CA"],["Fort Worth","TX"],
+  ["Jacksonville","FL"],["Columbus","OH"],["Charlotte","NC"],["Indianapolis","IN"],
+  ["San Francisco","CA"],["Seattle","WA"],["Denver","CO"],["Washington","DC"],
+  ["Boston","MA"],["El Paso","TX"],["Nashville","TN"],["Oklahoma City","OK"],
+  ["Las Vegas","NV"],["Detroit","MI"],["Portland","OR"],["Memphis","TN"],
+  ["Louisville","KY"],["Milwaukee","WI"],["Baltimore","MD"],["Albuquerque","NM"],
+  ["Tucson","AZ"],["Fresno","CA"],["Mesa","AZ"],["Sacramento","CA"],
+  ["Atlanta","GA"],["Kansas City","MO"],["Colorado Springs","CO"],["Raleigh","NC"],
+  ["Omaha","NE"],["Miami","FL"],["Long Beach","CA"],["Virginia Beach","VA"],
+  ["Oakland","CA"],["Minneapolis","MN"],["Tulsa","OK"],["Bakersfield","CA"],
+  ["Wichita","KS"],["Arlington","TX"],["Aurora","CO"],["Tampa","FL"],
+  ["New Orleans","LA"],["Cleveland","OH"],["Honolulu","HI"],["Anaheim","CA"],
+  ["Lexington","KY"],["Stockton","CA"],["Corpus Christi","TX"],["Henderson","NV"],
+  ["Riverside","CA"],["Newark","NJ"],["Saint Paul","MN"],["Santa Ana","CA"],
+  ["Cincinnati","OH"],["Irvine","CA"],["Orlando","FL"],["Pittsburgh","PA"],
+  ["St. Louis","MO"],["Greensboro","NC"],["Jersey City","NJ"],["Anchorage","AK"],
+  ["Lincoln","NE"],["Plano","TX"],["Durham","NC"],["Buffalo","NY"],
+  ["Chandler","AZ"],["Chula Vista","CA"],["Toledo","OH"],["Madison","WI"],
+  ["Gilbert","AZ"],["Reno","NV"],["Fort Wayne","IN"],["North Las Vegas","NV"],
+  ["St. Petersburg","FL"],["Lubbock","TX"],["Irving","TX"],["Laredo","TX"],
+  ["Winston-Salem","NC"],["Chesapeake","VA"],["Glendale","AZ"],["Garland","TX"],
+  ["Scottsdale","AZ"],["Norfolk","VA"],["Boise","ID"],["Fremont","CA"],
+  ["Spokane","WA"],["Santa Clarita","CA"],["Baton Rouge","LA"],["Richmond","VA"],
+  ["Hialeah","FL"],["San Bernardino","CA"],["Tacoma","WA"],["Modesto","CA"],
+  ["Huntsville","AL"],["Des Moines","IA"],["Yonkers","NY"],["Rochester","NY"],
+  ["Moreno Valley","CA"],["Fayetteville","NC"],["Fontana","CA"],["Columbus","GA"],
+  ["Worcester","MA"],["Port St. Lucie","FL"],["Little Rock","AR"],["Augusta","GA"],
+  ["Oxnard","CA"],["Birmingham","AL"],["Montgomery","AL"],["Frisco","TX"],
+  ["Amarillo","TX"],["Salt Lake City","UT"],["Grand Rapids","MI"],["Huntington Beach","CA"],
+  ["Overland Park","KS"],["Glendale","CA"],["Tallahassee","FL"],["Grand Prairie","TX"],
+  ["McKinney","TX"],["Cape Coral","FL"],["Sioux Falls","SD"],["Peoria","AZ"],
+  ["Vancouver","WA"],["Knoxville","TN"],["Akron","OH"],["Tempe","AZ"],
+  ["Brownsville","TX"],["Newport News","VA"],["Mobile","AL"],["Ontario","CA"],
+  ["Clarksville","TN"],["Cary","NC"],["Elk Grove","CA"],["Shreveport","LA"],
+  ["Eugene","OR"],["Aurora","IL"],["Salem","OR"],["Santa Rosa","CA"],
+  ["Rancho Cucamonga","CA"],["Pembroke Pines","FL"],["Fort Lauderdale","FL"],["Springfield","MO"],
+  ["Oceanside","CA"],["Garden Grove","CA"],["Lancaster","CA"],["Murfreesboro","TN"],
+  ["Corona","CA"],["Killeen","TX"],["Salinas","CA"],["Roseville","CA"],
+  ["Denton","TX"],["Surprise","AZ"],["Macon","GA"],["Paterson","NJ"],
+  ["Lakewood","CO"],["Hayward","CA"],["Charleston","SC"],["Alexandria","VA"],
+  ["Hollywood","FL"],["Springfield","MA"],["Kansas City","KS"],["Sunnyvale","CA"],
+  ["Bellevue","WA"],["Joliet","IL"],["Naperville","IL"],["Escondido","CA"],
+  ["Bridgeport","CT"],["Savannah","GA"],["Olathe","KS"],["Mesquite","TX"],
+  ["Pasadena","TX"],["Rockford","IL"],["Gainesville","FL"],["Syracuse","NY"],
+  ["Pomona","CA"],["Visalia","CA"],["Thornton","CO"],["Waco","TX"],
+  ["Jackson","MS"],["Columbia","SC"],["Lakewood","NJ"],["Fullerton","CA"],
+  ["Torrance","CA"],["Victorville","CA"],["Midland","TX"],["Orange","CA"],
+  ["Miramar","FL"],["Hampton","VA"],["Warren","MI"],["Stamford","CT"],
+  ["Cedar Rapids","IA"],["Elizabeth","NJ"],["Palmdale","CA"],["Meridian","ID"],
+  ["Round Rock","TX"],["Coral Springs","FL"],["Sterling Heights","MI"],["Carrollton","TX"],
+  ["Kent","WA"],["New Haven","CT"],["Fargo","ND"],["Dayton","OH"],
+  ["Norman","OK"],["Pasadena","CA"],["Athens","GA"],["Topeka","KS"],
+  ["Simi Valley","CA"],["Olympia","WA"],["Abilene","TX"],["Concord","CA"],
+  ["Hartford","CT"],["Beaumont","TX"],["Fairfield","CA"],["Allentown","PA"],
+  ["Provo","UT"],["Vallejo","CA"],["Berkeley","CA"],["Charleston","WV"],
+  ["Ann Arbor","MI"],["West Valley City","UT"],["Richmond","CA"],["Boulder","CO"],
+  ["West Covina","CA"],["Sugar Land","TX"],["Lansing","MI"],["Evansville","IN"],
+  ["Wilmington","NC"],["Round Lake","IL"],["Manchester","NH"],["Las Cruces","NM"],
+  ["Davenport","IA"],["Tyler","TX"],["High Point","NC"],["Antioch","CA"],
+  ["Murrieta","CA"],["Temecula","CA"],["Norwalk","CA"],["Columbia","MO"],
+  ["Thousand Oaks","CA"],["El Monte","CA"],["Lewisville","TX"],["Edison","NJ"],
+  ["Burbank","CA"],["Inglewood","CA"],["Costa Mesa","CA"],["Rialto","CA"],
+  ["Fort Collins","CO"],["Pearland","TX"],["Carlsbad","CA"],["Westminster","CO"],
+  ["Lowell","MA"],["Wichita Falls","TX"],["Arvada","CO"],["Ventura","CA"],
+  ["Pueblo","CO"],["Centennial","CO"],["South Bend","IN"],["Cambridge","MA"],
+  ["College Station","TX"],["Clearwater","FL"],["Concord","NC"],["Topeka","KS"],
+  ["Independence","MO"],["Lafayette","LA"],["Hartford","CT"],["Trenton","NJ"],
+  ["Wilmington","DE"],["Cheyenne","WY"],["Burlington","VT"],["Bismarck","ND"],
+  ["Juneau","AK"],["Dover","DE"],["Annapolis","MD"]
+];
+
+Object.assign(window, { US_CITIES });
+
+</script>
+
+<script type="text/babel" data-presets="react">
 // Shared UI atoms (depend on React being loaded globally).
 const { useState: useStateShared } = React;
 
@@ -7983,6 +8196,99 @@ function readDebtSnapshot() {
 }
 window.readDebtSnapshot = readDebtSnapshot;
 
+// Profile snapshot — reads ledger:profile (salary, location, filing) and runs
+// the v1 tax engine if available so v2 has a monthly take-home figure for
+// the net-worth projection. Stays null if salary is unset so consumers can
+// show empty-state guidance.
+function readProfileSnapshot() {
+  try {
+    const raw = localStorage.getItem("ledger:profile");
+    if (!raw) return null;
+    const p = JSON.parse(raw);
+    const salary = Number(p?.salary) || 0;
+    if (salary <= 0) return null;
+    const profile = {
+      salary,
+      bonus: Number(p?.bonus) || 0,
+      additionalIncome: Number(p?.additionalIncome) || 0,
+      filing: p?.filing || "single",
+      state: p?.state || "NY",
+      city: p?.city || "",
+      ficaExempt: !!p?.ficaExempt,
+      jobStartDate: p?.jobStartDate || null,
+    };
+    let monthlyTakeHome = 0;
+    let monthlyTax = 0;
+    if (typeof window.computeTaxes === "function") {
+      const t = window.computeTaxes(profile);
+      monthlyTakeHome = (t.takeHome || 0) / 12;
+      monthlyTax = (t.totalTax || 0) / 12;
+    }
+    return { ...profile, monthlyTakeHome, monthlyTax };
+  } catch { return null; }
+}
+window.readProfileSnapshot = readProfileSnapshot;
+
+// Accounts snapshot — ledger:accounts is the user's manually entered list of
+// cash + investment account balances with APYs (set up on v1's Overview tab).
+// Returns null if the user hasn't entered any so consumers can opt out.
+function readAccountsSnapshot() {
+  try {
+    const raw = localStorage.getItem("ledger:accounts");
+    if (!raw) return null;
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr) || arr.length === 0) return null;
+    const accounts = arr.map((a) => ({
+      name: String(a?.name || "Account").trim() || "Account",
+      balance: Number(a?.balance) || 0,
+      apy: Number(a?.apy) || 0,
+    }));
+    const totalBalance = accounts.reduce((s, a) => s + a.balance, 0);
+    // Balance-weighted blended APY for projection — empty if zero balances
+    const weightedApy = totalBalance > 0
+      ? accounts.reduce((s, a) => s + a.apy * a.balance, 0) / totalBalance
+      : 0;
+    return { accounts, totalBalance, weightedApy };
+  } catch { return null; }
+}
+window.readAccountsSnapshot = readAccountsSnapshot;
+
+function useProfileSnapshot() {
+  const [snap, setSnap] = useStateV2C(readProfileSnapshot);
+  useEffectV2C(() => {
+    const reread = () => setSnap((prev) => {
+      const next = readProfileSnapshot();
+      if (prev === next) return prev;
+      if (!prev && !next) return prev;
+      if (prev && next && prev.salary === next.salary && prev.monthlyTakeHome === next.monthlyTakeHome) return prev;
+      return next;
+    });
+    window.addEventListener("storage", reread);
+    const id = setInterval(reread, 2000);
+    return () => { window.removeEventListener("storage", reread); clearInterval(id); };
+  }, []);
+  return snap;
+}
+window.useProfileSnapshot = useProfileSnapshot;
+
+function useAccountsSnapshot() {
+  const [snap, setSnap] = useStateV2C(readAccountsSnapshot);
+  useEffectV2C(() => {
+    const reread = () => setSnap((prev) => {
+      const next = readAccountsSnapshot();
+      if (prev === next) return prev;
+      if (!prev && !next) return prev;
+      if (prev && next && prev.totalBalance === next.totalBalance && prev.accounts.length === next.accounts.length) return prev;
+      return next;
+    });
+    window.addEventListener("storage", reread);
+    const id = setInterval(reread, 2000);
+    return () => { window.removeEventListener("storage", reread); clearInterval(id); };
+  }, []);
+  return snap;
+}
+window.useAccountsSnapshot = useAccountsSnapshot;
+
 function useDebtSnapshot() {
   const [snapshot, setSnapshot] = useStateV2C(readDebtSnapshot);
 
@@ -8116,185 +8422,157 @@ window.V2Current = V2Current;
 </script>
 
 <script type="text/babel" data-presets="react">
-// v2 Projection tab — calendar-anchored 12-month forecast.
+// v2 Projection tab — superficial executive net-worth dashboard.
 //
-// What it does:
-//   • Looks at the last N completed days of spend (default 30, configurable;
-//     auto-widens to all data if you have less than 30 days).
-//   • Splits spend into "recurring" (Subscriptions, Bills, Rent, Mortgage,
-//     Insurance, Internet, Phone, Utilities) vs "variable" (everything else).
-//   • Projects 12 monthly buckets starting next calendar month, each labeled
-//     with its real month-year ("Jun 2026", "Jul 2026", ...).
-//   • Recurring is projected at its observed monthly cadence (fixed).
-//   • Variable is projected as a per-day rate × days-in-month, with a ±25%
-//     band on variable to render an upper/lower range.
-//   • Renders a Recharts ComposedChart with the variable range as a shaded
-//     area and the mid total as a line, plus a calendar-anchored table
-//     beneath it.
-//   • Plain-text methodology line under the chart states the lookback window.
+// What it shows:
+//   • One bold status banner with a milestone-aware trajectory line.
+//   • ONE minimalist gradient area chart of projected net worth across 12
+//     calendar months (Jun 2026 → May 2027 style). No gridlines, no
+//     multi-series clutter, no legends.
+//   • Exactly 3 plain-English bullets: cash runway · next milestone date
+//     · methodology in plain text.
 //
-// No data → friendly empty state pointing user to Record. No salary / no
-// budget targets — this tab is purely "if I keep spending like this, here's
-// where I'm headed." That keeps v2 self-contained: it never reads from the
-// v1 calculator state (which lives only at /v1/).
+// Math model (all in integer cents internally, rounded only at display):
+//   • Starting assets = sum of ledger:accounts balances.
+//   • Starting debt   = sum of ledger:debt principals.
+//   • Starting net worth = assets - debt.
+//   • Each forward month:
+//     - Income flow  = monthly take-home from window.computeTaxes(profile).
+//     - Spend flow   = recent rolling daily average × days in that month
+//                      (uses last 30 days of transactions, scaled).
+//     - Debt flow    = monthly debt minimums (already in v1's ledger:debt).
+//     - Asset growth = blended account APY / 12 on the prior balance.
+//     - Net savings  = income - spend - debt_minimums  (can be negative).
+//     - assets += net_savings + asset_growth.
+//     - debt   = max(0, debt - debt_minimums).
+//
+// Cold start: if the user has < 5 days of recorded transactions, hide the
+// chart entirely and show a single line of instruction.
 
 const { useMemo: useMemoV2P } = React;
 
-const RECURRING_CATEGORIES_V2 = new Set([
-  "Subscriptions", "Bills", "Rent", "Mortgage", "Insurance",
-  "Internet", "Phone", "Utilities",
-]);
-
 const MONTHS_SHORT_V2 = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const MONTHS_LONG_V2 = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+// Round-number milestones used by the status banner. Picked the next one
+// above current net worth that the 12-month projection actually crosses.
+const MILESTONES_V2 = [0, 10000, 25000, 50000, 75000, 100000, 150000, 250000, 500000, 1000000, 2000000, 5000000];
+
+function findNextMilestone(projection, startNet) {
+  if (!projection || projection.length === 0) return null;
+  const endNet = projection[projection.length - 1].netWorth;
+  // Decide the direction of search.
+  const ascending = endNet > startNet;
+  if (!ascending) {
+    // Look for a milestone we're sliding DOWN past — for the "trending down"
+    // copy. Use the milestone just below the starting value.
+    for (let i = MILESTONES_V2.length - 1; i >= 0; i--) {
+      const m = MILESTONES_V2[i];
+      if (m < startNet && projection.some((p) => p.netWorth <= m)) {
+        const crossing = projection.find((p) => p.netWorth <= m);
+        return { threshold: m, crossingLabel: crossing.label, direction: "down" };
+      }
+    }
+    return null;
+  }
+  // Ascending — find the first milestone above the start that the projection actually crosses.
+  for (const m of MILESTONES_V2) {
+    if (m <= startNet) continue;
+    const crossing = projection.find((p) => p.netWorth >= m);
+    if (crossing) return { threshold: m, crossingLabel: crossing.label, direction: "up" };
+  }
+  return null;
+}
 
 function V2Projection() {
   const transactions = window.useTransactions();
-  // Debt minimums are contractual recurring overhead — fold them into the
-  // recurring forecast alongside Subscriptions/Bills per v2 spec Step 6.
-  // readDebtSnapshot returns dollars (matching v1's storage shape), but the
-  // rest of this file works in integer cents, so convert at the boundary.
-  const debtSnap = window.useDebtSnapshot ? window.useDebtSnapshot() : null;
-  const debtMinPerMonth = debtSnap ? window.toCents(debtSnap.minTotal) : 0;
+  const debtSnap     = window.useDebtSnapshot ? window.useDebtSnapshot() : null;
+  const profileSnap  = window.useProfileSnapshot ? window.useProfileSnapshot() : null;
+  const accountsSnap = window.useAccountsSnapshot ? window.useAccountsSnapshot() : null;
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const todayISO = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
 
-  // ── Pick a lookback window. 30 days is the default; if fewer than 7
-  // days of data exist, we widen to "all data" so a brand-new user still
-  // gets some signal. ───────────────────────────────────────────────────
-  const stats = useMemoV2P(() => {
-    // Even with zero transactions, we still have meaningful data if v1 has
-    // debts set up — show a debt-only projection in that case rather than the
-    // generic empty state.
-    if ((!transactions || transactions.length === 0) && debtMinPerMonth <= 0) {
-      return { hasData: false, days: 0, recurringPerMonth: 0, variablePerDay: 0, dailyAvg: 0 };
-    }
+  // ── Recent rolling daily spend rate (from last 30 days) ──────────────
+  const spendStats = useMemoV2P(() => {
     if (!transactions || transactions.length === 0) {
-      // Debt-only case — no transaction history, but contractual debt load exists.
-      return {
-        hasData: true,
-        days: 0,
-        totalDaysOfData: 0,
-        recurringPerMonth: debtMinPerMonth,
-        variablePerDay: 0,
-        dailyAvg: debtMinPerMonth / 30,
-        windowRecurring: 0,
-        windowVariable: 0,
-        debtFromV1: debtMinPerMonth,
-        recurringFromTx: 0,
-        debtOnly: true,
-      };
+      return { hasData: false, daysOfData: 0, dailyAvg: 0, windowDays: 0, distinctDays: 0 };
     }
-
-    // Find earliest date with data
+    // Distinct days of data — used for the cold-start gate (5 days minimum).
+    const dayCounts = new Set();
     let earliest = todayISO;
     for (const t of transactions) {
-      if (t.date && t.date < earliest) earliest = t.date;
+      if (t.date) {
+        dayCounts.add(t.date);
+        if (t.date < earliest) earliest = t.date;
+      }
     }
     const earliestD = new Date(earliest + "T00:00:00");
-    const totalDaysOfData = Math.max(
-      1,
-      Math.round((today.getTime() - earliestD.getTime()) / 86400000) + 1
-    );
-
-    // Use 30d window if user has 30+ days of data, otherwise use all data.
-    const windowDays = Math.min(30, Math.max(7, totalDaysOfData));
+    const totalDaysSpan = Math.max(1, Math.round((today.getTime() - earliestD.getTime()) / 86400000) + 1);
+    const windowDays = Math.min(30, Math.max(7, totalDaysSpan));
     const cutoff = new Date(today);
     cutoff.setDate(cutoff.getDate() - windowDays + 1);
     const cutoffISO = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, "0")}-${String(cutoff.getDate()).padStart(2, "0")}`;
-
-    let recurringCents = 0;
-    let variableCents = 0;
+    let totalCents = 0;
     for (const t of transactions) {
       if (!t.date || t.date < cutoffISO || t.date > todayISO) continue;
-      const cents = Number(t.amount_cents) || 0;
-      if (RECURRING_CATEGORIES_V2.has(t.category)) recurringCents += cents;
-      else variableCents += cents;
+      totalCents += (Number(t.amount_cents) || 0);
     }
-
-    // Recurring scaled to a 30-day month (best estimate from the window),
-    // plus the v1 Debt tab's contractual monthly minimums layered on top —
-    // those are fixed cash outflows the user is committed to, even if no
-    // transaction has been logged for them yet on Record.
-    const recurringFromTx = (recurringCents / windowDays) * 30;
-    const recurringPerMonth = recurringFromTx + debtMinPerMonth;
-    const variablePerDay = variableCents / windowDays;
-    // Daily average still uses observed cash flow — the debt minimum is
-    // counted via recurringPerMonth and would double-count if we added cents
-    // to dailyAvg directly. Surface it separately in the methodology line.
-    const dailyAvg = (recurringCents + variableCents) / windowDays;
-
     return {
       hasData: true,
-      days: windowDays,
-      totalDaysOfData,
-      recurringPerMonth,
-      recurringFromTx,
-      debtFromV1: debtMinPerMonth,
-      variablePerDay,
-      dailyAvg,
-      windowRecurring: recurringCents,
-      windowVariable: variableCents,
-      debtOnly: false,
+      daysOfData: totalDaysSpan,
+      distinctDays: dayCounts.size,
+      windowDays,
+      dailyAvg: totalCents / windowDays / 100, // dollars per day
     };
-  }, [transactions, todayISO, debtMinPerMonth]);
+  }, [transactions, todayISO]);
 
-  // ── Calendar-anchored monthly buckets ─────────────────────────────────
-  // Start with NEXT calendar month (so the chart projects forward only) and
-  // walk forward 12 months. Each bucket carries its real month-year label
-  // and uses days-in-that-month for variable spend so a 28-day Feb projects
-  // less variable than a 31-day Jan.
-  const monthlyBuckets = useMemoV2P(() => {
-    if (!stats.hasData) return [];
+  // ── Build the calendar-anchored 12-month net-worth projection ─────────
+  const projection = useMemoV2P(() => {
+    const startAssets = accountsSnap ? accountsSnap.totalBalance : 0;
+    const startDebt   = debtSnap ? debtSnap.principalTotal : 0;
+    const monthlyTakeHome = profileSnap ? profileSnap.monthlyTakeHome : 0;
+    const monthlyDebtMin = debtSnap ? debtSnap.minTotal : 0;
+    const weightedApyMonthly = accountsSnap ? accountsSnap.weightedApy / 12 : 0;
+    // If we have nothing meaningful, return an empty projection.
+    if (startAssets === 0 && startDebt === 0 && monthlyTakeHome === 0 && !spendStats.hasData) {
+      return [];
+    }
+    let assets = startAssets;
+    let debt = startDebt;
     const out = [];
+    // Anchor to first day of NEXT calendar month so the first plotted point
+    // is the projected end-of-next-month state.
     const start = new Date(today.getFullYear(), today.getMonth() + 1, 1);
     for (let i = 0; i < 12; i++) {
       const d = new Date(start.getFullYear(), start.getMonth() + i, 1);
       const year = d.getFullYear();
       const monthIdx = d.getMonth();
       const daysInMonth = new Date(year, monthIdx + 1, 0).getDate();
-      const label = `${MONTHS_SHORT_V2[monthIdx]} ${year}`;
-      const recurring = stats.recurringPerMonth;
-      const variableMid = stats.variablePerDay * daysInMonth;
-      const low = recurring + variableMid * 0.75;
-      const mid = recurring + variableMid;
-      const high = recurring + variableMid * 1.25;
+      const monthlySpend = spendStats.dailyAvg * daysInMonth;
+      const netSavings = monthlyTakeHome - monthlySpend - monthlyDebtMin;
+      const assetGrowth = assets * weightedApyMonthly;
+      assets = assets + netSavings + assetGrowth;
+      debt = Math.max(0, debt - monthlyDebtMin);
+      const netWorth = assets - debt;
       out.push({
         key: `${year}-${String(monthIdx + 1).padStart(2, "0")}`,
-        label,
-        year,
-        monthIdx,
-        daysInMonth,
-        recurring,
-        variableMid,
-        low,
-        mid,
-        high,
-        // For Recharts area "band" trick: render low + (high-low) stacked,
-        // hide the bottom area so the visible band sits between low and high.
-        lowDollars: window.toDollars(Math.round(low)),
-        midDollars: window.toDollars(Math.round(mid)),
-        highDollars: window.toDollars(Math.round(high)),
-        bandSpan: window.toDollars(Math.round(high - low)),
+        label: `${MONTHS_SHORT_V2[monthIdx]} ${year}`,
+        longLabel: `${MONTHS_LONG_V2[monthIdx]} ${year}`,
+        assets, debt, netWorth,
+        monthlySpend, netSavings, assetGrowth,
       });
     }
     return out;
-  }, [stats, today.getFullYear(), today.getMonth()]);
+  }, [accountsSnap, debtSnap, profileSnap, spendStats, today.getFullYear(), today.getMonth()]);
 
-  // Cumulative 12-month totals for the summary KPI strip.
-  const annualTotal = useMemoV2P(() => {
-    if (!monthlyBuckets.length) return { low: 0, mid: 0, high: 0 };
-    return monthlyBuckets.reduce(
-      (acc, b) => ({ low: acc.low + b.low, mid: acc.mid + b.mid, high: acc.high + b.high }),
-      { low: 0, mid: 0, high: 0 }
-    );
-  }, [monthlyBuckets]);
+  const startNetWorth = (accountsSnap?.totalBalance || 0) - (debtSnap?.principalTotal || 0);
+  const endProjection = projection.length > 0 ? projection[projection.length - 1] : null;
+  const milestone = projection.length > 0 ? findNextMilestone(projection, startNetWorth) : null;
 
-  const fmt = (cents) => window.fmtUSD0(window.toDollars(Math.round(cents)));
-
-  // ── Empty state ────────────────────────────────────────────────────────
-  if (!stats.hasData) {
+  // ── Cold-start gate — fewer than 5 distinct days of recorded data ─────
+  if (spendStats.distinctDays < 5) {
     return (
       <>
         <header className="page-head">
@@ -8303,29 +8581,112 @@ function V2Projection() {
           </div>
           <div className="page-head-right">
             <div className="page-sub">
-              Forward forecast based on your recorded spending
+              Forward forecast of your net worth
             </div>
           </div>
         </header>
         <section className="card">
-          <div className="card-body">
-            <p style={{ margin: 0, color: "var(--ink-3)" }}>
-              Add a few transactions on the{" "}
+          <div className="card-body" style={{ padding: "32px 24px", textAlign: "center" }}>
+            <div style={{ fontSize: 16, color: "var(--ink-2)", lineHeight: 1.5, maxWidth: 480, margin: "0 auto" }}>
+              Log <strong>5 days</strong> of transactions in the{" "}
               <a href="#record" style={{ color: "var(--accent)" }}>Record</a>{" "}
-              tab — or set up debts in the{" "}
-              <a href="v1/#debt" style={{ color: "var(--accent)" }}>full calculator's Debt tab</a>{" "}
-              — and this page will start projecting where your spending is
-              headed. A week of recorded spend gives the most useful forecast.
-            </p>
+              tab to unlock your future forecast.
+            </div>
+            {spendStats.distinctDays > 0 && (
+              <div style={{ marginTop: 14, fontSize: 13, color: "var(--ink-4)" }}>
+                {spendStats.distinctDays} day{spendStats.distinctDays === 1 ? "" : "s"} logged so far · {5 - spendStats.distinctDays} to go
+              </div>
+            )}
           </div>
         </section>
       </>
     );
   }
 
+  // ── Format helpers ────────────────────────────────────────────────────
+  const fmtDollars = (n) => {
+    const abs = Math.abs(n);
+    if (abs >= 1000000) return (n < 0 ? "-$" : "$") + (abs / 1000000).toFixed(abs >= 10000000 ? 0 : 1) + "M";
+    if (abs >= 1000) return (n < 0 ? "-$" : "$") + (abs / 1000).toFixed(abs >= 10000 ? 0 : 1) + "k";
+    return (n < 0 ? "-$" : "$") + Math.round(abs).toLocaleString();
+  };
+  const fmtUSD = (n) => window.fmtUSD0(Math.round(n));
+
+  // ── Status banner copy ────────────────────────────────────────────────
+  let bannerCopy;
+  let bannerTone = "neutral";
+  if (milestone && milestone.direction === "up") {
+    bannerCopy = `On pace to cross ${fmtDollars(milestone.threshold)} by ${milestone.crossingLabel}.`;
+    bannerTone = "positive";
+  } else if (milestone && milestone.direction === "down") {
+    bannerCopy = `Spending is outpacing income — net worth set to drop below ${fmtDollars(milestone.threshold)} by ${milestone.crossingLabel}.`;
+    bannerTone = "negative";
+  } else if (endProjection && endProjection.netWorth > startNetWorth) {
+    bannerCopy = `On track to grow to ${fmtDollars(endProjection.netWorth)} by ${endProjection.label}.`;
+    bannerTone = "positive";
+  } else if (endProjection && endProjection.netWorth < startNetWorth) {
+    const delta = startNetWorth - endProjection.netWorth;
+    bannerCopy = `Net worth trending down — projected to fall ${fmtDollars(delta)} by ${endProjection.label}.`;
+    bannerTone = "negative";
+  } else {
+    bannerCopy = `Net worth holding steady around ${fmtDollars(startNetWorth)}.`;
+    bannerTone = "neutral";
+  }
+
+  // ── Three bullet insights ────────────────────────────────────────────
+  // Cash runway: at current spend (income removed) how many months until assets hit 0.
+  // We use total monthly spend including debt minimums for a conservative number.
+  const totalMonthlyOutflow = (spendStats.dailyAvg * 30) + (debtSnap?.minTotal || 0);
+  const currentAssets = accountsSnap?.totalBalance || 0;
+  const runwayMonths = (totalMonthlyOutflow > 0 && currentAssets > 0)
+    ? Math.floor(currentAssets / totalMonthlyOutflow)
+    : null;
+
+  const methodologyApy = accountsSnap ? (accountsSnap.weightedApy * 100).toFixed(1) : "0.0";
+
+  const bullets = [
+    runwayMonths != null
+      ? `Cash runway: ${runwayMonths} month${runwayMonths === 1 ? "" : "s"} of expenses on hand (${fmtUSD(currentAssets)} at ${fmtUSD(totalMonthlyOutflow)}/mo outflow).`
+      : (currentAssets > 0
+          ? `Cash runway: ${fmtUSD(currentAssets)} on hand — no spend history yet to estimate burn rate.`
+          : `Cash runway: no account balances entered on /v1/#overview yet.`),
+    milestone
+      ? (milestone.direction === "up"
+          ? `Next major milestone: ${fmtDollars(milestone.threshold)} by ${milestone.crossingLabel}.`
+          : `Next threshold crossed: ${fmtDollars(milestone.threshold)} by ${milestone.crossingLabel} (declining).`)
+      : `No major milestones crossed in the next 12 months at this trajectory.`,
+    `Forecasted from your rolling daily spend over the last ${spendStats.windowDays} day${spendStats.windowDays === 1 ? "" : "s"}${profileSnap ? `, take-home pay from /v1/#budget` : " (no salary set — income assumed $0)"}${accountsSnap ? `, and account growth at ${methodologyApy}% blended APY` : ""}.`,
+  ];
+
+  // ── The chart ─────────────────────────────────────────────────────────
   const Recharts = window.Recharts;
-  const startLabel = monthlyBuckets[0]?.label;
-  const endLabel = monthlyBuckets[monthlyBuckets.length - 1]?.label;
+  // Include the starting point (today) so the line starts from current net worth.
+  const chartData = [
+    { label: "Now", netWorth: Math.round(startNetWorth), netWorthDollars: Math.round(startNetWorth) },
+    ...projection.map((p) => ({
+      label: p.label,
+      netWorth: Math.round(p.netWorth),
+      netWorthDollars: Math.round(p.netWorth),
+    })),
+  ];
+
+  const bannerStyle = {
+    padding: "20px 24px",
+    borderRadius: 8,
+    fontSize: 20,
+    lineHeight: 1.35,
+    fontWeight: 600,
+    marginBottom: 18,
+    background: bannerTone === "positive" ? "var(--accent-bg)"
+              : bannerTone === "negative" ? "rgba(178, 69, 42, 0.08)"
+              : "var(--surface-2)",
+    color: bannerTone === "positive" ? "var(--accent)"
+         : bannerTone === "negative" ? "var(--negative)"
+         : "var(--ink-2)",
+    border: "1px solid " + (bannerTone === "positive" ? "var(--accent-dim)"
+                          : bannerTone === "negative" ? "rgba(178, 69, 42, 0.25)"
+                          : "var(--border)"),
+  };
 
   return (
     <>
@@ -8335,195 +8696,85 @@ function V2Projection() {
         </div>
         <div className="page-head-right">
           <div className="page-sub">
-            {startLabel} to {endLabel} · based on the last {stats.days} day{stats.days === 1 ? "" : "s"} of recorded spending
+            12-month outlook · {chartData[1]?.label || "—"} to {chartData[chartData.length - 1]?.label || "—"}
           </div>
         </div>
       </header>
 
+      <div style={bannerStyle}>{bannerCopy}</div>
+
       <section className="card">
-        <header className="card-head">
-          <h2>Burn rate</h2>
-          <span className="card-tag">{stats.days}-day rolling window</span>
-        </header>
-        <div className="card-body">
-          <div className="kpi-grid">
-            <div className="kpi">
-              <div className="kpi-label">Daily average</div>
-              <div className="kpi-value">{fmt(stats.dailyAvg)}</div>
-              <div className="kpi-sub">across all categories</div>
+        <div className="card-body" style={{ padding: 16 }}>
+          {Recharts ? (
+            <div style={{ width: "100%", height: 320 }}>
+              <Recharts.ResponsiveContainer width="100%" height="100%">
+                <Recharts.AreaChart
+                  data={chartData}
+                  margin={{ top: 12, right: 24, left: 8, bottom: 8 }}
+                >
+                  <defs>
+                    <linearGradient id="v2NetWorthFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%"   stopColor="var(--accent)" stopOpacity={0.32} />
+                      <stop offset="100%" stopColor="var(--accent)" stopOpacity={0.02} />
+                    </linearGradient>
+                  </defs>
+                  <Recharts.XAxis
+                    dataKey="label"
+                    tick={{ fontSize: 11, fill: "var(--ink-3)" }}
+                    axisLine={{ stroke: "var(--border)" }}
+                    tickLine={false}
+                    interval={chartData.length > 8 ? 1 : 0}
+                  />
+                  <Recharts.YAxis
+                    tick={{ fontSize: 11, fill: "var(--ink-3)" }}
+                    axisLine={false}
+                    tickLine={false}
+                    tickFormatter={fmtDollars}
+                    width={56}
+                  />
+                  <Recharts.Tooltip
+                    formatter={(value) => [window.fmtUSD0(value), "Net worth"]}
+                    labelStyle={{ fontWeight: 600 }}
+                    contentStyle={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 4 }}
+                  />
+                  <Recharts.Area
+                    type="monotone"
+                    dataKey="netWorth"
+                    stroke="var(--accent)"
+                    strokeWidth={2.5}
+                    fill="url(#v2NetWorthFill)"
+                    isAnimationActive={false}
+                  />
+                </Recharts.AreaChart>
+              </Recharts.ResponsiveContainer>
             </div>
-            <div className="kpi">
-              <div className="kpi-label">Recurring / month</div>
-              <div className="kpi-value">{fmt(stats.recurringPerMonth)}</div>
-              <div className="kpi-sub">
-                {stats.debtFromV1 > 0
-                  ? `incl. ${fmt(stats.debtFromV1)} debt minimums from v1`
-                  : "subscriptions, bills, rent"}
-              </div>
-            </div>
-            <div className="kpi">
-              <div className="kpi-label">Variable / day</div>
-              <div className="kpi-value">{fmt(stats.variablePerDay)}</div>
-              <div className="kpi-sub">groceries, dining, gas, etc.</div>
-            </div>
-            <div className="kpi">
-              <div className="kpi-label">Next 12 months (mid)</div>
-              <div className="kpi-value">{fmt(annualTotal.mid)}</div>
-              <div className="kpi-sub">range {fmt(annualTotal.low)} to {fmt(annualTotal.high)}</div>
-            </div>
-          </div>
+          ) : null}
         </div>
       </section>
 
       <section className="card">
-        <header className="card-head">
-          <h2>Forecast by month</h2>
-          <span className="card-tag">{startLabel} – {endLabel}</span>
-        </header>
         <div className="card-body">
-          {Recharts ? (
-            <div style={{ width: "100%", height: 340 }}>
-              <Recharts.ResponsiveContainer width="100%" height="100%">
-                <Recharts.ComposedChart
-                  data={monthlyBuckets.map((b) => ({
-                    label: b.label,
-                    low: b.lowDollars,
-                    band: b.bandSpan,
-                    mid: b.midDollars,
-                    recurring: window.toDollars(Math.round(b.recurring)),
-                  }))}
-                  margin={{ top: 16, right: 24, left: 8, bottom: 8 }}
-                >
-                  <Recharts.CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                  <Recharts.XAxis
-                    dataKey="label"
-                    tick={{ fontSize: 11, fill: "var(--ink-3)" }}
-                    interval={0}
-                    angle={-30}
-                    textAnchor="end"
-                    height={56}
-                  />
-                  <Recharts.YAxis
-                    tick={{ fontSize: 11, fill: "var(--ink-3)" }}
-                    tickFormatter={(v) => `$${Math.round(v / 1000)}k`}
-                  />
-                  <Recharts.Tooltip
-                    formatter={(value, name) => {
-                      if (name === "Low bound") return [window.fmtUSD0(value), name];
-                      if (name === "Range") return null; // hide stacked-helper band from tooltip
-                      return [window.fmtUSD0(value), name];
-                    }}
-                    labelStyle={{ fontWeight: 600 }}
-                    contentStyle={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 4 }}
-                  />
-                  {/* Stacked-area band trick: invisible "low" sets the floor, visible "band" fills low→high */}
-                  <Recharts.Area
-                    type="monotone"
-                    dataKey="low"
-                    stackId="band"
-                    stroke="none"
-                    fill="transparent"
-                    name="Low bound"
-                    isAnimationActive={false}
-                  />
-                  <Recharts.Area
-                    type="monotone"
-                    dataKey="band"
-                    stackId="band"
-                    stroke="none"
-                    fill="var(--accent-dim)"
-                    fillOpacity={0.45}
-                    name="Range"
-                    isAnimationActive={false}
-                  />
-                  <Recharts.Line
-                    type="monotone"
-                    dataKey="mid"
-                    stroke="var(--accent)"
-                    strokeWidth={2}
-                    dot={{ r: 3, fill: "var(--accent)" }}
-                    name="Projected total"
-                    isAnimationActive={false}
-                  />
-                  <Recharts.Line
-                    type="monotone"
-                    dataKey="recurring"
-                    stroke="var(--gold)"
-                    strokeWidth={1.5}
-                    strokeDasharray="4 4"
-                    dot={false}
-                    name="Recurring floor"
-                    isAnimationActive={false}
-                  />
-                  <Recharts.Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />
-                </Recharts.ComposedChart>
-              </Recharts.ResponsiveContainer>
-            </div>
-          ) : null}
-
-          <p style={{ marginTop: 12, fontSize: 13, color: "var(--ink-3)" }}>
-            Methodology: recurring costs are held flat at{" "}
-            {fmt(stats.recurringPerMonth)}/mo
-            {stats.debtFromV1 > 0 && stats.recurringFromTx > 0 && (
-              <> (
-                {fmt(stats.recurringFromTx)} from your last {stats.days}{" "}
-                day{stats.days === 1 ? "" : "s"} of recorded recurring spend +{" "}
-                {fmt(stats.debtFromV1)} debt minimums from the v1 Debt tab
-              )</>
-            )}
-            {stats.debtFromV1 > 0 && stats.recurringFromTx === 0 && (
-              <> (entirely from {fmt(stats.debtFromV1)} debt minimums in the v1 Debt tab — no recurring tags on your Record entries yet)</>
-            )}
-            {stats.debtFromV1 === 0 && stats.days > 0 && (
-              <> (from the last {stats.days} day{stats.days === 1 ? "" : "s"} of recorded spend)</>
-            )}
-            . Variable spend is projected at {fmt(stats.variablePerDay)}/day
-            with a ±25% band to reflect week-to-week swings (groceries, gas,
-            dining). Each month's variable total scales with its actual
-            number of days, so short months like February forecast lower
-            than 31-day months.
-          </p>
-
-          <div style={{ overflowX: "auto", marginTop: 16 }}>
-            <table className="results-table" style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr>
-                  <th style={{ textAlign: "left", padding: "8px 12px", borderBottom: "1px solid var(--border)" }}>Month</th>
-                  <th style={{ textAlign: "right", padding: "8px 12px", borderBottom: "1px solid var(--border)" }}>Recurring</th>
-                  <th style={{ textAlign: "right", padding: "8px 12px", borderBottom: "1px solid var(--border)" }}>Variable (mid)</th>
-                  <th style={{ textAlign: "right", padding: "8px 12px", borderBottom: "1px solid var(--border)", color: "var(--ink-3)" }}>Low</th>
-                  <th style={{ textAlign: "right", padding: "8px 12px", borderBottom: "1px solid var(--border)", fontWeight: 600 }}>Mid</th>
-                  <th style={{ textAlign: "right", padding: "8px 12px", borderBottom: "1px solid var(--border)", color: "var(--ink-3)" }}>High</th>
-                </tr>
-              </thead>
-              <tbody>
-                {monthlyBuckets.map((b) => (
-                  <tr key={b.key}>
-                    <td style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)" }}>{b.label}</td>
-                    <td style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)", textAlign: "right" }}>{fmt(b.recurring)}</td>
-                    <td style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)", textAlign: "right" }}>{fmt(b.variableMid)}</td>
-                    <td style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)", textAlign: "right", color: "var(--ink-3)" }}>{fmt(b.low)}</td>
-                    <td style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)", textAlign: "right", fontWeight: 600 }}>{fmt(b.mid)}</td>
-                    <td style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)", textAlign: "right", color: "var(--ink-3)" }}>{fmt(b.high)}</td>
-                  </tr>
-                ))}
-                <tr>
-                  <td style={{ padding: "12px", borderTop: "2px solid var(--border-2)", fontWeight: 600 }}>12-month total</td>
-                  <td style={{ padding: "12px", borderTop: "2px solid var(--border-2)", textAlign: "right", fontWeight: 600 }}>{fmt(stats.recurringPerMonth * 12)}</td>
-                  <td style={{ padding: "12px", borderTop: "2px solid var(--border-2)", textAlign: "right", fontWeight: 600 }}>{fmt(annualTotal.mid - stats.recurringPerMonth * 12)}</td>
-                  <td style={{ padding: "12px", borderTop: "2px solid var(--border-2)", textAlign: "right", color: "var(--ink-3)" }}>{fmt(annualTotal.low)}</td>
-                  <td style={{ padding: "12px", borderTop: "2px solid var(--border-2)", textAlign: "right", fontWeight: 700 }}>{fmt(annualTotal.mid)}</td>
-                  <td style={{ padding: "12px", borderTop: "2px solid var(--border-2)", textAlign: "right", color: "var(--ink-3)" }}>{fmt(annualTotal.high)}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <p style={{ marginTop: 12, fontSize: 12, color: "var(--ink-4)" }}>
-            Recurring categories: Subscriptions, Bills, Rent, Mortgage,
-            Insurance, Internet, Phone, Utilities. Tag entries with these
-            categories on Record so they're treated as fixed costs.
-          </p>
+          <ul style={{ margin: 0, paddingLeft: 0, listStyle: "none" }}>
+            {bullets.map((b, i) => (
+              <li key={i} style={{
+                padding: "10px 0",
+                borderTop: i === 0 ? "none" : "1px solid var(--border)",
+                fontSize: 14,
+                lineHeight: 1.5,
+                color: "var(--ink-2)",
+                display: "flex",
+                gap: 12,
+              }}>
+                <span style={{
+                  flexShrink: 0, width: 24, height: 24, borderRadius: "50%",
+                  background: "var(--accent-bg)", color: "var(--accent)",
+                  display: "inline-flex", alignItems: "center", justifyContent: "center",
+                  fontSize: 12, fontWeight: 600,
+                }}>{i + 1}</span>
+                <span>{b}</span>
+              </li>
+            ))}
+          </ul>
         </div>
       </section>
     </>
