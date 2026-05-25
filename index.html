@@ -8151,8 +8151,10 @@ function V2Projection() {
   const transactions = window.useTransactions();
   // Debt minimums are contractual recurring overhead — fold them into the
   // recurring forecast alongside Subscriptions/Bills per v2 spec Step 6.
+  // readDebtSnapshot returns dollars (matching v1's storage shape), but the
+  // rest of this file works in integer cents, so convert at the boundary.
   const debtSnap = window.useDebtSnapshot ? window.useDebtSnapshot() : null;
-  const debtMinPerMonth = debtSnap ? debtSnap.minTotal : 0;
+  const debtMinPerMonth = debtSnap ? window.toCents(debtSnap.minTotal) : 0;
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
