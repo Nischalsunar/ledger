@@ -15940,6 +15940,10 @@ function NetWorthCard({ data, profile }) {
   }, [data?.invest, data?.savingsTarget, horizon]);
 
   // ── Build monthly cash-accounts trajectory (compound at APY) ──
+  // Includes the "Going to savings" portion of spareCash that doesn't fund a
+  // non-compound investment — that money accumulates as cash compounding at
+  // the Debt tab's savings APY. Without this, savingsTarget would silently
+  // vanish from net worth.
   const cashMonthly = useMemoOv(() => {
     const series = new Array(horizon + 1).fill(0);
     accounts.forEach((acct) => {
@@ -15952,8 +15956,27 @@ function NetWorthCard({ data, profile }) {
         series[m] += bal;
       }
     });
+    // Unallocated savingsTarget bucket
+    const savingsTarget = Number(data?.savingsTarget) || 0;
+    if (savingsTarget > 0) {
+      const portfolio = data?.invest?.portfolio;
+      const investments = portfolio?.investments || [];
+      const nonCompoundPctSum = investments.reduce((a, inv) => {
+        const compound = inv.compound != null ? !!inv.compound : false;
+        return compound ? a : a + (Number(inv.pct) || 0);
+      }, 0);
+      const cashFraction = Math.max(0, Math.min(1, 1 - nonCompoundPctSum));
+      const monthlyToCash = savingsTarget * cashFraction;
+      const apy = Number(data?.debt?.savingsAPY) || 0;
+      const mRate = Math.pow(1 + apy, 1/12) - 1;
+      let cash = 0;
+      for (let m = 1; m <= horizon; m++) {
+        cash = cash * (1 + mRate) + monthlyToCash;
+        series[m] += cash;
+      }
+    }
     return series;
-  }, [accounts, horizon]);
+  }, [accounts, horizon, data?.savingsTarget, data?.debt?.savingsAPY, data?.invest]);
 
   // Anchor for absolute calendar labels: user's job-start date if provided,
   // else today. Re-derived when profile.jobStartDate changes.
@@ -16208,11 +16231,16 @@ function FiveYearProjection({ data, profile }) {
     return series;
   }, [data?.invest, data?.savingsTarget, yearCount]);
 
-  // Cash accounts compounded at their APY
+  // Cash projection = (1) entered accounts + (2) "Going to savings" portion that
+  // doesn't land in a non-compound investment. Compound investments self-fund
+  // from their own principle, so anything not allocated to a non-compound %
+  // accumulates as cash, compounding at the Debt tab's savings APY.
   const cashAtYear = useMemoOv(() => {
+    const series = new Array(yearCount + 1).fill(0);
+
+    // (1) Entered accounts — each compounds at its own APY
     try {
       const accounts = JSON.parse(localStorage.getItem("ledger:accounts") || "[]");
-      const series = new Array(yearCount + 1).fill(0);
       accounts.forEach((acct) => {
         const apy = Number(acct.apy) || 0;
         const bal0 = Number(acct.balance) || 0;
@@ -16220,9 +16248,33 @@ function FiveYearProjection({ data, profile }) {
           series[y] += bal0 * Math.pow(1 + apy, y);
         }
       });
-      return series;
-    } catch { return new Array(yearCount + 1).fill(0); }
-  }, [yearCount]);
+    } catch {}
+
+    // (2) Unallocated savingsTarget → cash savings bucket
+    const savingsTarget = Number(data?.savingsTarget) || 0;
+    if (savingsTarget > 0) {
+      const portfolio = data?.invest?.portfolio;
+      const investments = portfolio?.investments || [];
+      // Sum non-compound investment % — these consume from savingsTarget × pct
+      const nonCompoundPctSum = investments.reduce((a, inv) => {
+        const compound = inv.compound != null ? !!inv.compound : false;
+        return compound ? a : a + (Number(inv.pct) || 0);
+      }, 0);
+      const cashFraction = Math.max(0, Math.min(1, 1 - nonCompoundPctSum));
+      const monthlyToCash = savingsTarget * cashFraction;
+      const apy = Number(data?.debt?.savingsAPY) || 0;
+      const mRate = Math.pow(1 + apy, 1/12) - 1;
+      let cash = 0;
+      for (let y = 1; y <= yearCount; y++) {
+        for (let m = 0; m < 12; m++) {
+          cash = cash * (1 + mRate) + monthlyToCash;
+        }
+        series[y] += cash;
+      }
+    }
+
+    return series;
+  }, [yearCount, data?.savingsTarget, data?.debt?.savingsAPY, data?.invest]);
 
   // Build per-year row objects
   const rows = useMemoOv(() => {
@@ -16344,7 +16396,7 @@ function FiveYearProjection({ data, profile }) {
               {rows.map((r) => <td key={r.n} className="num pos">{fmtUSD0(r.invest)}</td>)}
             </tr>
             <tr>
-              <td>Cash (end of year)</td>
+              <td>Cash (end of year) <span style={{ fontSize: 10, color: "var(--ink-3)", marginLeft: 6 }}>accounts + unallocated savings</span></td>
               {rows.map((r) => <td key={r.n} className="num">{fmtUSD0(r.cash)}</td>)}
             </tr>
             <tr style={{ borderTop: "2px solid var(--border-2)" }}>
