@@ -10559,6 +10559,44 @@ function HouseholdCalculator({ profile, getBudgetData }) {
       }
     } catch {}
   }, []);
+
+  // ── Budget → Household pull (reverse direction of the existing Household → Budget sync) ──
+  // On every tick, if Budget tab has rent / utilities / groceries values that Household
+  // doesn't yet reflect, pull them in. Combined with the existing forward sync this gives
+  // bidirectional sync without infinite loops (both directions converge on the same value
+  // and React skips re-renders when state is unchanged).
+  useEffectHH(() => {
+    try {
+      const budget = JSON.parse(localStorage.getItem("ledger:budget") || "null");
+      const exp = budget?.expenses;
+      if (!exp) return;
+      setHousehold((h) => {
+        const cur = h.shared || {};
+        // Budget stores rent + groceries as FULL amounts (rentSplit, etc. for the divide).
+        // Household.shared also stores full amounts. So they should match directly.
+        const next = { ...cur };
+        let changed = false;
+        const setIfDifferent = (key, val) => {
+          const v = Number(val) || 0;
+          if (v > 0 && (Number(cur[key]) || 0) !== v) {
+            next[key] = v;
+            changed = true;
+          }
+        };
+        setIfDifferent("rent", exp.rent);
+        // Budget combines "utilities" but not "internet" / "other". Map carefully:
+        // keep utilities → utilities, leave internet + other alone (they're Household-only).
+        setIfDifferent("utilities", exp.utilities);
+        // Budget's groceries (post-split) vs Household's full groceries —
+        // when rentSplit > 1 or splitMode != equal, Budget already stores the share,
+        // not the full. Only pull groceries when there's no member split (1 member).
+        if ((h.members?.length || 1) === 1) {
+          setIfDifferent("groceries", exp.groceries);
+        }
+        return changed ? { ...h, shared: next } : h;
+      });
+    } catch {}
+  }, [tickHH]);
   useEffectHH(() => {
     localStorage.setItem("ledger:household", JSON.stringify(household));
   }, [household]);
