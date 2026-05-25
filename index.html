@@ -16033,7 +16033,7 @@ function NetWorthCard({ data, profile }) {
 // Then layers debt simulation + investment projection + cash compounding on top.
 function FiveYearProjection({ data, profile }) {
   const [open, setOpen] = useStateOv(true);
-  const [yearCount, setYearCount] = useStateOv(5); // 1..5
+  const [yearCount, setYearCount] = useStateOv(5); // 1..10
 
   // Pull growth assumptions from Budget tab. Fall back to sensible defaults.
   const growth = useMemoOv(() => {
@@ -16152,7 +16152,7 @@ function FiveYearProjection({ data, profile }) {
       >
         <h2 style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <span className={"debt-card-chevron" + (open ? " is-open" : "")} style={{ pointerEvents: "none" }} aria-hidden="true">▾</span>
-          1-{yearCount} year projection
+          {yearCount}-year projection
         </h2>
         <span className="card-tag">
           today {fmtUSD0(todayNet)} → Y{yearCount} {fmtUSD0(finalNet)}
@@ -16170,9 +16170,9 @@ function FiveYearProjection({ data, profile }) {
           come from your Debt, Investing, and Accounts state.
         </p>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, marginTop: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12, marginTop: 14, flexWrap: "wrap" }}>
           <span className="footnote" style={{ marginRight: "auto", fontStyle: "normal" }}>Show:</span>
-          {[1, 2, 3, 4, 5].map((n) => (
+          {[1, 2, 3, 5, 7, 10].map((n) => (
             <button
               key={n}
               type="button"
