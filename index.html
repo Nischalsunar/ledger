@@ -7775,16 +7775,22 @@ window.V2Current = V2Current;
 </script>
 
 <script type="text/babel" data-presets="react">
-// v2 Projection tab — burn-rate forecast based on actual transactions.
+// v2 Projection tab — calendar-anchored 12-month forecast.
 //
 // What it does:
-//   • Looks at the last N completed days of spend (default 30, configurable).
-//   • Splits spend into "recurring" (Subscriptions, Bills, Rent, Insurance,
-//     Internet, Phone) vs "variable" (everything else).
-//   • Recurring is projected forward at its observed monthly cadence.
-//   • Variable is projected as a per-day rate with a ±25% range to reflect
-//     real-world volatility (groceries, gas, dining swing week to week).
-//   • Renders projections for 30d / 60d / 90d / 12mo windows.
+//   • Looks at the last N completed days of spend (default 30, configurable;
+//     auto-widens to all data if you have less than 30 days).
+//   • Splits spend into "recurring" (Subscriptions, Bills, Rent, Mortgage,
+//     Insurance, Internet, Phone, Utilities) vs "variable" (everything else).
+//   • Projects 12 monthly buckets starting next calendar month, each labeled
+//     with its real month-year ("Jun 2026", "Jul 2026", ...).
+//   • Recurring is projected at its observed monthly cadence (fixed).
+//   • Variable is projected as a per-day rate × days-in-month, with a ±25%
+//     band on variable to render an upper/lower range.
+//   • Renders a Recharts ComposedChart with the variable range as a shaded
+//     area and the mid total as a line, plus a calendar-anchored table
+//     beneath it.
+//   • Plain-text methodology line under the chart states the lookback window.
 //
 // No data → friendly empty state pointing user to Record. No salary / no
 // budget targets — this tab is purely "if I keep spending like this, here's
@@ -7797,6 +7803,8 @@ const RECURRING_CATEGORIES_V2 = new Set([
   "Subscriptions", "Bills", "Rent", "Mortgage", "Insurance",
   "Internet", "Phone", "Utilities",
 ]);
+
+const MONTHS_SHORT_V2 = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
 function V2Projection() {
   const transactions = window.useTransactions();
@@ -7856,25 +7864,56 @@ function V2Projection() {
     };
   }, [transactions, todayISO]);
 
-  // ── Project forward for several horizons ───────────────────────────────
-  const horizons = useMemoV2P(() => {
+  // ── Calendar-anchored monthly buckets ─────────────────────────────────
+  // Start with NEXT calendar month (so the chart projects forward only) and
+  // walk forward 12 months. Each bucket carries its real month-year label
+  // and uses days-in-that-month for variable spend so a 28-day Feb projects
+  // less variable than a 31-day Jan.
+  const monthlyBuckets = useMemoV2P(() => {
     if (!stats.hasData) return [];
-    const HZN = [
-      { label: "Next 30 days", days: 30 },
-      { label: "Next 60 days", days: 60 },
-      { label: "Next 90 days", days: 90 },
-      { label: "Next 12 months", days: 365 },
-    ];
-    return HZN.map(({ label, days }) => {
-      const recurring = stats.recurringPerMonth * (days / 30);
-      const variableMid = stats.variablePerDay * days;
-      // ±25% band on variable spend — recurring stays fixed
+    const out = [];
+    const start = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+    for (let i = 0; i < 12; i++) {
+      const d = new Date(start.getFullYear(), start.getMonth() + i, 1);
+      const year = d.getFullYear();
+      const monthIdx = d.getMonth();
+      const daysInMonth = new Date(year, monthIdx + 1, 0).getDate();
+      const label = `${MONTHS_SHORT_V2[monthIdx]} ${year}`;
+      const recurring = stats.recurringPerMonth;
+      const variableMid = stats.variablePerDay * daysInMonth;
       const low = recurring + variableMid * 0.75;
       const mid = recurring + variableMid;
       const high = recurring + variableMid * 1.25;
-      return { label, days, low, mid, high, recurring, variableMid };
-    });
-  }, [stats]);
+      out.push({
+        key: `${year}-${String(monthIdx + 1).padStart(2, "0")}`,
+        label,
+        year,
+        monthIdx,
+        daysInMonth,
+        recurring,
+        variableMid,
+        low,
+        mid,
+        high,
+        // For Recharts area "band" trick: render low + (high-low) stacked,
+        // hide the bottom area so the visible band sits between low and high.
+        lowDollars: window.toDollars(Math.round(low)),
+        midDollars: window.toDollars(Math.round(mid)),
+        highDollars: window.toDollars(Math.round(high)),
+        bandSpan: window.toDollars(Math.round(high - low)),
+      });
+    }
+    return out;
+  }, [stats, today.getFullYear(), today.getMonth()]);
+
+  // Cumulative 12-month totals for the summary KPI strip.
+  const annualTotal = useMemoV2P(() => {
+    if (!monthlyBuckets.length) return { low: 0, mid: 0, high: 0 };
+    return monthlyBuckets.reduce(
+      (acc, b) => ({ low: acc.low + b.low, mid: acc.mid + b.mid, high: acc.high + b.high }),
+      { low: 0, mid: 0, high: 0 }
+    );
+  }, [monthlyBuckets]);
 
   const fmt = (cents) => window.fmtUSD0(window.toDollars(Math.round(cents)));
 
@@ -7906,6 +7945,10 @@ function V2Projection() {
     );
   }
 
+  const Recharts = window.Recharts;
+  const startLabel = monthlyBuckets[0]?.label;
+  const endLabel = monthlyBuckets[monthlyBuckets.length - 1]?.label;
+
   return (
     <>
       <header className="page-head">
@@ -7914,7 +7957,7 @@ function V2Projection() {
         </div>
         <div className="page-head-right">
           <div className="page-sub">
-            Based on the last {stats.days} day{stats.days === 1 ? "" : "s"} of recorded spending
+            {startLabel} to {endLabel} · based on the last {stats.days} day{stats.days === 1 ? "" : "s"} of recorded spending
           </div>
         </div>
       </header>
@@ -7922,7 +7965,7 @@ function V2Projection() {
       <section className="card">
         <header className="card-head">
           <h2>Burn rate</h2>
-          <span className="card-tag">{stats.days}-day window</span>
+          <span className="card-tag">{stats.days}-day rolling window</span>
         </header>
         <div className="card-body">
           <div className="kpi-grid">
@@ -7941,43 +7984,147 @@ function V2Projection() {
               <div className="kpi-value">{fmt(stats.variablePerDay)}</div>
               <div className="kpi-sub">groceries, dining, gas, etc.</div>
             </div>
+            <div className="kpi">
+              <div className="kpi-label">Next 12 months (mid)</div>
+              <div className="kpi-value">{fmt(annualTotal.mid)}</div>
+              <div className="kpi-sub">range {fmt(annualTotal.low)} to {fmt(annualTotal.high)}</div>
+            </div>
           </div>
         </div>
       </section>
 
       <section className="card">
         <header className="card-head">
-          <h2>Forecast</h2>
-          <span className="card-tag">range = ±25% on variable spend</span>
+          <h2>Forecast by month</h2>
+          <span className="card-tag">{startLabel} – {endLabel}</span>
         </header>
         <div className="card-body">
-          <div style={{ overflowX: "auto" }}>
+          {Recharts ? (
+            <div style={{ width: "100%", height: 340 }}>
+              <Recharts.ResponsiveContainer width="100%" height="100%">
+                <Recharts.ComposedChart
+                  data={monthlyBuckets.map((b) => ({
+                    label: b.label,
+                    low: b.lowDollars,
+                    band: b.bandSpan,
+                    mid: b.midDollars,
+                    recurring: window.toDollars(Math.round(b.recurring)),
+                  }))}
+                  margin={{ top: 16, right: 24, left: 8, bottom: 8 }}
+                >
+                  <Recharts.CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                  <Recharts.XAxis
+                    dataKey="label"
+                    tick={{ fontSize: 11, fill: "var(--ink-3)" }}
+                    interval={0}
+                    angle={-30}
+                    textAnchor="end"
+                    height={56}
+                  />
+                  <Recharts.YAxis
+                    tick={{ fontSize: 11, fill: "var(--ink-3)" }}
+                    tickFormatter={(v) => `$${Math.round(v / 1000)}k`}
+                  />
+                  <Recharts.Tooltip
+                    formatter={(value, name) => {
+                      if (name === "Low bound") return [window.fmtUSD0(value), name];
+                      if (name === "Range") return null; // hide stacked-helper band from tooltip
+                      return [window.fmtUSD0(value), name];
+                    }}
+                    labelStyle={{ fontWeight: 600 }}
+                    contentStyle={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 4 }}
+                  />
+                  {/* Stacked-area band trick: invisible "low" sets the floor, visible "band" fills low→high */}
+                  <Recharts.Area
+                    type="monotone"
+                    dataKey="low"
+                    stackId="band"
+                    stroke="none"
+                    fill="transparent"
+                    name="Low bound"
+                    isAnimationActive={false}
+                  />
+                  <Recharts.Area
+                    type="monotone"
+                    dataKey="band"
+                    stackId="band"
+                    stroke="none"
+                    fill="var(--accent-dim)"
+                    fillOpacity={0.45}
+                    name="Range"
+                    isAnimationActive={false}
+                  />
+                  <Recharts.Line
+                    type="monotone"
+                    dataKey="mid"
+                    stroke="var(--accent)"
+                    strokeWidth={2}
+                    dot={{ r: 3, fill: "var(--accent)" }}
+                    name="Projected total"
+                    isAnimationActive={false}
+                  />
+                  <Recharts.Line
+                    type="monotone"
+                    dataKey="recurring"
+                    stroke="var(--gold)"
+                    strokeWidth={1.5}
+                    strokeDasharray="4 4"
+                    dot={false}
+                    name="Recurring floor"
+                    isAnimationActive={false}
+                  />
+                  <Recharts.Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />
+                </Recharts.ComposedChart>
+              </Recharts.ResponsiveContainer>
+            </div>
+          ) : null}
+
+          <p style={{ marginTop: 12, fontSize: 13, color: "var(--ink-3)" }}>
+            Methodology: recurring costs are held flat at your observed
+            monthly rate ({fmt(stats.recurringPerMonth)}/mo from the last
+            {" "}{stats.days} day{stats.days === 1 ? "" : "s"}). Variable spend
+            is projected at {fmt(stats.variablePerDay)}/day with a ±25% band
+            to reflect week-to-week swings (groceries, gas, dining). Each
+            month's variable total scales with its actual number of days, so
+            short months like February forecast lower than 31-day months.
+          </p>
+
+          <div style={{ overflowX: "auto", marginTop: 16 }}>
             <table className="results-table" style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr>
-                  <th style={{ textAlign: "left", padding: "8px 12px", borderBottom: "1px solid var(--border)" }}>Horizon</th>
+                  <th style={{ textAlign: "left", padding: "8px 12px", borderBottom: "1px solid var(--border)" }}>Month</th>
                   <th style={{ textAlign: "right", padding: "8px 12px", borderBottom: "1px solid var(--border)" }}>Recurring</th>
                   <th style={{ textAlign: "right", padding: "8px 12px", borderBottom: "1px solid var(--border)" }}>Variable (mid)</th>
-                  <th style={{ textAlign: "right", padding: "8px 12px", borderBottom: "1px solid var(--border)" }}>Low</th>
+                  <th style={{ textAlign: "right", padding: "8px 12px", borderBottom: "1px solid var(--border)", color: "var(--ink-3)" }}>Low</th>
                   <th style={{ textAlign: "right", padding: "8px 12px", borderBottom: "1px solid var(--border)", fontWeight: 600 }}>Mid</th>
-                  <th style={{ textAlign: "right", padding: "8px 12px", borderBottom: "1px solid var(--border)" }}>High</th>
+                  <th style={{ textAlign: "right", padding: "8px 12px", borderBottom: "1px solid var(--border)", color: "var(--ink-3)" }}>High</th>
                 </tr>
               </thead>
               <tbody>
-                {horizons.map((h) => (
-                  <tr key={h.days}>
-                    <td style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)" }}>{h.label}</td>
-                    <td style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)", textAlign: "right" }}>{fmt(h.recurring)}</td>
-                    <td style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)", textAlign: "right" }}>{fmt(h.variableMid)}</td>
-                    <td style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)", textAlign: "right", color: "var(--ink-3)" }}>{fmt(h.low)}</td>
-                    <td style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)", textAlign: "right", fontWeight: 600 }}>{fmt(h.mid)}</td>
-                    <td style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)", textAlign: "right", color: "var(--ink-3)" }}>{fmt(h.high)}</td>
+                {monthlyBuckets.map((b) => (
+                  <tr key={b.key}>
+                    <td style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)" }}>{b.label}</td>
+                    <td style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)", textAlign: "right" }}>{fmt(b.recurring)}</td>
+                    <td style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)", textAlign: "right" }}>{fmt(b.variableMid)}</td>
+                    <td style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)", textAlign: "right", color: "var(--ink-3)" }}>{fmt(b.low)}</td>
+                    <td style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)", textAlign: "right", fontWeight: 600 }}>{fmt(b.mid)}</td>
+                    <td style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)", textAlign: "right", color: "var(--ink-3)" }}>{fmt(b.high)}</td>
                   </tr>
                 ))}
+                <tr>
+                  <td style={{ padding: "12px", borderTop: "2px solid var(--border-2)", fontWeight: 600 }}>12-month total</td>
+                  <td style={{ padding: "12px", borderTop: "2px solid var(--border-2)", textAlign: "right", fontWeight: 600 }}>{fmt(stats.recurringPerMonth * 12)}</td>
+                  <td style={{ padding: "12px", borderTop: "2px solid var(--border-2)", textAlign: "right", fontWeight: 600 }}>{fmt(annualTotal.mid - stats.recurringPerMonth * 12)}</td>
+                  <td style={{ padding: "12px", borderTop: "2px solid var(--border-2)", textAlign: "right", color: "var(--ink-3)" }}>{fmt(annualTotal.low)}</td>
+                  <td style={{ padding: "12px", borderTop: "2px solid var(--border-2)", textAlign: "right", fontWeight: 700 }}>{fmt(annualTotal.mid)}</td>
+                  <td style={{ padding: "12px", borderTop: "2px solid var(--border-2)", textAlign: "right", color: "var(--ink-3)" }}>{fmt(annualTotal.high)}</td>
+                </tr>
               </tbody>
             </table>
           </div>
-          <p style={{ marginTop: 16, fontSize: 13, color: "var(--ink-3)" }}>
+
+          <p style={{ marginTop: 12, fontSize: 12, color: "var(--ink-4)" }}>
             Recurring categories: Subscriptions, Bills, Rent, Mortgage,
             Insurance, Internet, Phone, Utilities. Tag entries with these
             categories on Record so they're treated as fixed costs.
