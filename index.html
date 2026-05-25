@@ -9436,7 +9436,9 @@ function ExpenseItemRow({ item, onChange, onRemove }) {
 }
 
 // A sub-section card (Secondary or Subscriptions) — list of items + presets + custom add.
+// Collapsible header — click the chevron / heading to fold the body.
 function ExpenseSection({ title, hint, items, onChange, presets, accentColor }) {
+  const [open, setOpen] = useStateBudget(true);
   const subtotal = items.reduce((a, it) => a + (Number(it.amount) || 0), 0);
   const updateItem = (id, next) => onChange(items.map((it) => it.id === id ? next : it));
   const removeItem = (id) => onChange(items.filter((it) => it.id !== id));
@@ -9448,12 +9450,22 @@ function ExpenseSection({ title, hint, items, onChange, presets, accentColor }) 
     ]);
   };
   return (
-    <section className="card expense-section" style={accentColor ? { borderLeftColor: accentColor } : {}}>
-      <header className="card-head">
-        <h2>{title}</h2>
-        <span className="card-tag">{fmtUSD0(subtotal)}/mo</span>
+    <section className={"card expense-section" + (open ? "" : " is-collapsed")} style={accentColor ? { borderLeftColor: accentColor } : {}}>
+      <header
+        className="card-head"
+        style={{ cursor: "pointer" }}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <h2 style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span className={"debt-card-chevron" + (open ? " is-open" : "")} style={{ pointerEvents: "none" }} aria-hidden="true">▾</span>
+          {title}
+        </h2>
+        <span className="card-tag">
+          {fmtUSD0(subtotal)}/mo
+          {!open && items.length > 0 && <span style={{ marginLeft: 8, color: "var(--ink-3)" }}>· {items.length} item{items.length !== 1 ? "s" : ""}</span>}
+        </span>
       </header>
-      <div className="card-body">
+      {open && <div className="card-body">
         {hint && <p className="expense-section-hint">{hint}</p>}
         {items.length === 0 && (
           <div className="port-empty">No items yet — pick a preset below or add your own.</div>
@@ -9483,7 +9495,7 @@ function ExpenseSection({ title, hint, items, onChange, presets, accentColor }) 
               ))}
           </div>
         </div>
-      </div>
+      </div>}
     </section>
   );
 }
@@ -9553,14 +9565,23 @@ function BudgetExpenses({ expenses, setExpenses }) {
     return a + (Number(expenses[f.key]) || 0);
   }, 0);
 
+  const [primaryOpen, setPrimaryOpen] = useStateBudget(true);
+
   return (
     <>
-    <section className="card expense-section" style={{ borderLeftColor: "#4DA77A" }}>
-      <header className="card-head">
-        <h2>Primary needs <span className="card-tag-inline" style={{ marginLeft: 8 }}>essentials</span></h2>
+    <section className={"card expense-section" + (primaryOpen ? "" : " is-collapsed")} style={{ borderLeftColor: "#4DA77A" }}>
+      <header
+        className="card-head"
+        style={{ cursor: "pointer" }}
+        onClick={() => setPrimaryOpen((v) => !v)}
+      >
+        <h2 style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span className={"debt-card-chevron" + (primaryOpen ? " is-open" : "")} style={{ pointerEvents: "none" }} aria-hidden="true">▾</span>
+          Primary needs <span className="card-tag-inline" style={{ marginLeft: 8 }}>essentials</span>
+        </h2>
         <span className="card-tag">{fmtUSD0(primarySubtotal)}/mo</span>
       </header>
-      <div className="card-body stack">
+      {primaryOpen && <div className="card-body stack">
         <p className="expense-section-hint">Things you must pay every month — rent, food, utilities, insurance, loans.</p>
         {PRIMARY_FIELDS.map((f) => {
           // Each syncable field — Insurance (from Auto), Transportation (gas, from Auto/Commute),
@@ -9650,7 +9671,7 @@ function BudgetExpenses({ expenses, setExpenses }) {
             </Field>
           );
         })}
-      </div>
+      </div>}
     </section>
 
     <ExpenseSection
