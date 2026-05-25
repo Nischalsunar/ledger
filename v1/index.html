@@ -10296,36 +10296,83 @@ function Projection({ years, yearCount, isMonthly, monthRows, max, growth, onYea
         </div>
       </div>
       <div className="card-body">
-        <div className="proj-chart" style={{ gridTemplateColumns: `repeat(${years.length}, 1fr)`, gap: years.length > 8 ? 4 : 14 }}>
-          {years.map((y) => {
-            // Compact label: $1.2k / $12.4k / $1.2M — wide bars use full $X,XXX, narrow ones get k/M
-            const compact = (n) => {
-              if (!n) return "";
-              if (n >= 1000000) return "$" + (n / 1000000).toFixed(1) + "M";
-              if (n >= 1000)    return "$" + Math.round(n / 100) / 10 + "k";
-              return "$" + Math.round(n);
-            };
+        {(() => {
+          // Compact label: $1.2k / $12.4k / $1.2M — wide bars use full $X,XXX, narrow ones get k/M
+          const compact = (n) => {
+            if (!n) return "";
+            if (n >= 1000000) return "$" + (n / 1000000).toFixed(1) + "M";
+            if (n >= 1000)    return "$" + Math.round(n / 100) / 10 + "k";
+            return "$" + Math.round(n);
+          };
+
+          // Decide whether to render monthly bars: only if the user is in Monthly
+          // view AND we have at most 24 rows (2 years). More than that and the
+          // bars get unreadably thin — fall back to yearly aggregate bars.
+          const renderMonthlyBars = isMonthly && monthRows.length > 0 && monthRows.length <= 24;
+
+          if (renderMonthlyBars) {
+            const monthMax = Math.max(
+              ...monthRows.map((r) => Math.max(r.takeHome, r.expenses)),
+              1
+            );
+            const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
             return (
-              <div key={y.year} className="proj-col">
-                <div className="proj-bars">
-                  <div className="proj-bar take" style={{ height: ((y.takeHome / max) * 100) + "%" }} title={`Take-home ${fmtUSD0(y.takeHome)}`}>
-                    <span className="proj-bar-label proj-bar-label-take">{compact(y.takeHome)}</span>
-                  </div>
-                  <div className="proj-bar exp"  style={{ height: ((y.expenses / max) * 100) + "%" }} title={`Expenses ${fmtUSD0(y.expenses)}`}>
-                    <span className="proj-bar-label proj-bar-label-exp">{compact(y.expenses)}</span>
-                  </div>
-                </div>
-                <div className="proj-year">{years.length > 10 ? y.year.toString().slice(-2) : y.year}</div>
+              <div className="proj-chart" style={{ gridTemplateColumns: `repeat(${monthRows.length}, 1fr)`, gap: monthRows.length > 12 ? 2 : 6 }}>
+                {monthRows.map((r) => {
+                  const [yStr, mStr] = r.key.split("-");
+                  const monthIdx = parseInt(mStr, 10);
+                  const monLabel = MONTHS_SHORT[monthIdx] || "";
+                  const yearShort = yStr.slice(-2);
+                  return (
+                    <div key={r.key} className="proj-col">
+                      <div className="proj-bars">
+                        <div className="proj-bar take" style={{ height: ((r.takeHome / monthMax) * 100) + "%" }} title={`Take-home ${fmtUSD0(r.takeHome)} · ${r.label}`}>
+                          <span className="proj-bar-label proj-bar-label-take">{compact(r.takeHome)}</span>
+                        </div>
+                        <div className="proj-bar exp" style={{ height: ((r.expenses / monthMax) * 100) + "%" }} title={`Expenses ${fmtUSD0(r.expenses)} · ${r.label}`}>
+                          <span className="proj-bar-label proj-bar-label-exp">{compact(r.expenses)}</span>
+                        </div>
+                      </div>
+                      <div className="proj-year" style={{ fontSize: monthRows.length > 18 ? 10 : 11 }}>
+                        {r.isYearStart ? `${monLabel} '${yearShort}` : monLabel}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             );
-          })}
-        </div>
+          }
+
+          // Yearly bars (default + fallback when monthly row count is large)
+          return (
+            <div className="proj-chart" style={{ gridTemplateColumns: `repeat(${years.length}, 1fr)`, gap: years.length > 8 ? 4 : 14 }}>
+              {years.map((y) => (
+                <div key={y.year} className="proj-col">
+                  <div className="proj-bars">
+                    <div className="proj-bar take" style={{ height: ((y.takeHome / max) * 100) + "%" }} title={`Take-home ${fmtUSD0(y.takeHome)} · ${y.year}`}>
+                      <span className="proj-bar-label proj-bar-label-take">{compact(y.takeHome)}</span>
+                    </div>
+                    <div className="proj-bar exp"  style={{ height: ((y.expenses / max) * 100) + "%" }} title={`Expenses ${fmtUSD0(y.expenses)} · ${y.year}`}>
+                      <span className="proj-bar-label proj-bar-label-exp">{compact(y.expenses)}</span>
+                    </div>
+                  </div>
+                  <div className="proj-year">{years.length > 10 ? y.year.toString().slice(-2) : y.year}</div>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
         <div className="proj-legend">
           <span><i className="dot take" /> Take-home</span>
           <span><i className="dot exp" /> Expenses</span>
-          {isMonthly && (
+          {isMonthly && monthRows.length > 24 && (
             <span style={{ marginLeft: "auto", fontStyle: "italic", fontFamily: "var(--display)", color: "var(--ink-4)" }}>
-              chart shows yearly totals · table shows months
+              chart shows yearly totals (too many months for monthly bars) · table shows months
+            </span>
+          )}
+          {isMonthly && monthRows.length > 0 && monthRows.length <= 24 && (
+            <span style={{ marginLeft: "auto", fontStyle: "italic", fontFamily: "var(--display)", color: "var(--ink-4)" }}>
+              {monthRows[0].label} – {monthRows[monthRows.length - 1].label}
             </span>
           )}
         </div>
