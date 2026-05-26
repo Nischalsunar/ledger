@@ -1,0 +1,26 @@
+{
+  "name": "Ledger",
+  "short_name": "Ledger",
+  "description": "Personal finance tracker: record spending, see cash flow, project net worth.",
+  "start_url": "/ledger/",
+  "scope": "/ledger/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F5F2EC",
+  "theme_color": "#1B4D3E",
+  "categories": ["finance", "productivity"],
+  "icons": [
+    {
+      "src": "/ledger/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/ledger/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

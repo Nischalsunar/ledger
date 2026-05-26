@@ -3,8 +3,19 @@
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Ledger - Personal finance calculator: budget, debt, investing, taxes</title>
 <meta name="description" content="Free personal finance calculator: monthly budget with rent/utility splits, debt payoff (avalanche vs snowball), compound investing projections, federal+state tax estimator, auto loan + total cost of ownership, and a multi-member household view. All math runs in your browser; data syncs across devices via your Google account."/>
-<meta name="theme-color" content="#0A0F0D"/>
+<meta name="theme-color" content="#1B4D3E"/>
 <link rel="canonical" href="https://nischalsunar.github.io/ledger/"/>
+
+<!-- PWA: installable on iOS (Safari Add to Home Screen) + Android (Chrome auto-prompt).
+     Manifest + service worker live at /ledger/manifest.webmanifest and /ledger/sw.js,
+     icon at /ledger/icon.svg. Absolute paths so both / and /v1/ resolve correctly. -->
+<link rel="manifest" href="/ledger/manifest.webmanifest"/>
+<link rel="apple-touch-icon" href="/ledger/icon.svg"/>
+<link rel="icon" type="image/svg+xml" href="/ledger/icon.svg"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-title" content="Ledger"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="mobile-web-app-capable" content="yes"/>
 
 <!-- Open Graph -->
 <meta property="og:type" content="website"/>
@@ -5960,6 +5971,14 @@ try {
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
+<script>
+if ("serviceWorker" in navigator && location.protocol === "https:") {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/ledger/sw.js", { scope: "/ledger/" })
+      .catch((e) => console.warn("[sw] register failed:", e.message));
+  });
+}
+</script>
 <script type="text/babel" data-presets="react">
 // Firebase sync layer — initializes Firebase, exposes Auth + Firestore helpers,
 // and (when a real user is signed in) mirrors writes to localStorage up to
