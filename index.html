@@ -6057,10 +6057,80 @@ input[type="radio"]:focus-visible + * {
   .nav-active-pill,
   .v2-cat-bar-fill,
   .v2-cat-bar-track,
-  .v2-hover-lift {
+  .v2-hover-lift,
+  .v1-shell .card,
+  .v1-shell .nav-item,
+  .v1-shell .segment-btn,
+  .v1-shell .years-btn,
+  .v1-shell .btn-ghost {
     animation: none !important;
     transition: none !important;
+    transform: none !important;
   }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   v1 motion design — scoped to .v1-shell so v2 keeps its own treatment.
+   Same engineering constraints: 200ms duration, cubic-bezier(0.4, 0, 0.2, 1)
+   easing, hardware-accelerated transform + opacity only.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Card lift on hover — dashboard containers gain altitude on focus so the
+   pointer's target feels tactile. Only fires on devices that actually have
+   hover (no touch screens) so a tap doesn't strand the card mid-air. */
+.v1-shell .card,
+.v1-shell .hero-card,
+.v1-shell .compound-card {
+  transition:
+    transform   200ms cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow  200ms cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  will-change: transform;
+}
+@media (hover: hover) {
+  .v1-shell .card:hover,
+  .v1-shell .hero-card:hover,
+  .v1-shell .compound-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+  }
+}
+
+/* Smooth state transitions on interactive controls — buttons, toggles,
+   segmented controls, and form inputs all share the same 200ms easing
+   so the interface feels rhythmically consistent. Only color-family
+   properties transition (no layout shift, GPU-friendly). */
+.v1-shell .nav-item,
+.v1-shell .segment-btn,
+.v1-shell .years-btn,
+.v1-shell .btn-ghost,
+.v1-shell .toggle-switch,
+.v1-shell .toggle-knob {
+  transition:
+    background-color 200ms cubic-bezier(0.4, 0, 0.2, 1),
+    border-color     200ms cubic-bezier(0.4, 0, 0.2, 1),
+    color            200ms cubic-bezier(0.4, 0, 0.2, 1),
+    transform        200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.v1-shell .text-input,
+.v1-shell .money-input,
+.v1-shell .select {
+  transition:
+    border-color     200ms cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow       200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* SVG line/area draw-in for v1 Recharts charts. Recharts emits stroke-dasharray
+   on initial mount when isAnimationActive is true — we add a fallback CSS
+   animation for any non-Recharts SVG line in the v1 tree (e.g. raw <path>
+   in custom widgets). dash-offset animation is GPU-accelerated. */
+@keyframes v1-stroke-draw {
+  from { stroke-dashoffset: var(--v1-dash-length, 1000); }
+  to   { stroke-dashoffset: 0; }
+}
+.v1-shell .v1-draw-on-mount {
+  stroke-dasharray: var(--v1-dash-length, 1000);
+  animation: v1-stroke-draw 1200ms cubic-bezier(0.4, 0, 0.2, 1) both;
 }
 
 </style>
