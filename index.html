@@ -8805,6 +8805,52 @@ const V2_TABS = [
   { id: "record",     label: "Record",     glyph: "R" },
 ];
 
+// ── Export-all bundles every per-user localStorage key into one JSON file ──
+// Scans the raw localStorage for ledger:u:{email}:* keys (the user-namespaced
+// shape produced by auth.jsx's shim). Skips ledger:colorMode and
+// ledger:sidebarHidden because those are UI-state preferences, not user data.
+function exportAllLedgerData() {
+  const user = window.__currentUser;
+  const email = user?.email || "_guest";
+  // Look up the user-specific prefix. The auth.jsx shim namespaces ledger:foo
+  // to ledger:u:{email}:foo. Anonymous/guest users land at ledger:u:_guest:foo.
+  const prefix = `ledger:u:${email}:`;
+  const UI_SUFFIXES = new Set(["sidebarHidden", "colorMode"]);
+  const data = {};
+  for (let i = 0; i < localStorage.length; i++) {
+    const fullKey = localStorage.key(i);
+    if (!fullKey || !fullKey.startsWith(prefix)) continue;
+    const suffix = fullKey.slice(prefix.length);
+    if (UI_SUFFIXES.has(suffix)) continue;
+    try {
+      const raw = localStorage.getItem(fullKey);
+      // Try to parse JSON; fall back to raw string if it's plain text.
+      try { data[suffix] = JSON.parse(raw); }
+      catch { data[suffix] = raw; }
+    } catch (e) { /* skip unreadable keys */ }
+  }
+  const today = new Date();
+  const stamp = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  const payload = {
+    schemaVersion: 1,
+    exportedAt: today.toISOString(),
+    user: email,
+    source: "ledger v2 export-all",
+    keyCount: Object.keys(data).length,
+    data,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `ledger-export-${email.replace(/[^a-z0-9._-]/gi, "_")}-${stamp}.json`;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 0);
+  return { keyCount: payload.keyCount, keys: Object.keys(data) };
+}
+window.exportAllLedgerData = exportAllLedgerData;
+
 // Signed-in user info + sign-out at the bottom of the sidebar. v1 has a
 // ProfileCorner widget in the top-right of every page; v2 keeps things
 // minimal by tucking the same affordances into the sidebar footer.
@@ -8856,6 +8902,21 @@ function V2ProfileBlock() {
           {email}
         </span>
       </div>
+      <button
+        type="button"
+        onClick={() => {
+          const result = exportAllLedgerData();
+          console.log("[ledger export]", result);
+        }}
+        style={{
+          width: "100%", padding: "6px 10px", fontSize: 12, marginBottom: 6,
+          border: "1px solid var(--border)", background: "var(--surface)",
+          color: "var(--ink-2)", borderRadius: 4, cursor: "pointer",
+        }}
+        title="Download every Ledger key you own as one JSON file (transactions, debts, accounts, profile, etc.)"
+      >
+        Export all data
+      </button>
       <button
         type="button"
         onClick={handleSignOut}
