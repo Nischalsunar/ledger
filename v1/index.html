@@ -18034,13 +18034,67 @@ function AdminUserDetail({ user, data, onClose }) {
     </section>
   );
 
+  // Build the same JSON payload v2's exportAllLedgerData produces, but from
+  // the admin's Firestore fetch (not the admin's own localStorage). Audit-stamped
+  // with adminExportBy so the file shows who pulled it.
+  const downloadUserData = () => {
+    const adminEmail = window.__currentUser?.email || "unknown";
+    const ok = window.confirm(
+      `Download all Firestore data for ${user.email}?\n\n` +
+      `This stamps your admin email (${adminEmail}) into the file as the puller. ` +
+      `Make sure you have a legitimate reason — this is logged to console.`
+    );
+    if (!ok) return;
+    const cleanData = {};
+    for (const [k, v] of Object.entries(data || {})) {
+      if (k.startsWith("__")) continue; // skip internal markers like __error
+      try { cleanData[k] = JSON.parse(v); }
+      catch { cleanData[k] = v; }
+    }
+    const today = new Date();
+    const stamp = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+    const payload = {
+      schemaVersion: 1,
+      exportedAt: today.toISOString(),
+      user: user.email,
+      uid: user.uid,
+      source: "ledger admin export-user",
+      adminExportBy: adminEmail,
+      keyCount: Object.keys(cleanData).length,
+      data: cleanData,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `ledger-admin-export-${(user.email || user.uid || "user").replace(/[^a-z0-9._-]/gi, "_")}-${stamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 0);
+    // Audit log — visible in admin's own console + (for posterity) the export file itself.
+    console.warn(`[admin audit] ${adminEmail} downloaded full data for ${user.email} (uid ${user.uid}) at ${payload.exportedAt}`);
+  };
+
   return (
     <section className="card admin-detail-card">
       <header className="card-head">
         <h2>{user.name || user.email}'s profile</h2>
-        <div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span className="card-tag">{onboarded ? "✓ onboarded" : "wizard not completed"}</span>
-          <button className="btn-link" style={{ marginLeft: 12 }} onClick={onClose}>close ✕</button>
+          <button
+            type="button"
+            onClick={downloadUserData}
+            disabled={!data || data.__error}
+            title={`Download every Firestore doc for ${user.email} as one JSON file. Logged as admin action.`}
+            style={{
+              padding: "4px 10px", fontSize: 12,
+              border: "1px solid var(--border)", background: "var(--surface)",
+              color: "var(--ink-2)", borderRadius: 4, cursor: "pointer",
+            }}
+          >
+            ⬇ Export JSON
+          </button>
+          <button className="btn-link" style={{ marginLeft: 4 }} onClick={onClose}>close ✕</button>
         </div>
       </header>
       <div className="card-body">
