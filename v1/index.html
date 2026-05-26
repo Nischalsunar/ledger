@@ -5028,16 +5028,31 @@ html[data-color-mode="light"] .date-input { color-scheme: light; }
   .footnote { font-size: 12px; }
   .row-hint { font-size: 11.5px; }
 
-  /* All tables get horizontal scroll wrapper */
+  /* All tables get horizontal scroll wrapper.
+     IMPORTANT: max-width: 100% is required so block-level tables don't grow
+     past their parent — without it, the natural intrinsic width of dense
+     numeric tables (like Overview's 7-column projection) overflows the
+     .card-body and the card visually cuts off content past the edge. */
   .ptable, .ltable, .amort-table {
     display: block;
     overflow-x: auto;
+    max-width: 100%;
     white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
   }
   .ptable thead, .ltable thead {
     display: table;
     width: 100%;
     table-layout: fixed;
+  }
+
+  /* Debt-card on /v1/#debt has its own grid layout that overflows on narrow
+     viewports (per-debt payment breakdown is ~410px wide). Wrap with the
+     same horizontal-scroll affordance as the data tables above. */
+  .debt-card {
+    overflow-x: auto;
+    max-width: 100%;
+    -webkit-overflow-scrolling: touch;
   }
 
   /* Row controls */
@@ -11367,7 +11382,7 @@ function HouseholdCalculator({ profile, getBudgetData }) {
               <span className="card-tag">{isMonthly ? "monthly" : "annual"}</span>
             </header>
             <div className="card-body" style={{ overflowX: "auto" }}>
-              <table className="ptable" style={{ minWidth: 600 }}>
+              <table className="ptable" style={{ minWidth: "min(600px, 100%)" }}>
                 <thead>
                   <tr>
                     <th>Line item</th>
@@ -12681,7 +12696,7 @@ function InvestingCalculator({ profile, getBudgetData }) {
               </h2>
             </header>
             <div className="card-body" style={{ overflowX: "auto" }}>
-              <table className="ptable" style={{ minWidth: 600 }}>
+              <table className="ptable" style={{ minWidth: "min(600px, 100%)" }}>
                 <thead>
                   <tr>
                     <th>{view === "monthly" ? "Month" : "Year"}</th>
@@ -15777,7 +15792,7 @@ function RecordEntryForm({ editing, onCancelEdit }) {
       </header>
       <div className="card-body">
         <form onSubmit={submit} noValidate>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
             <Field label="Amount" hint={error ? <span style={{color:"var(--negative)"}}>{error}</span> : "what did you spend?"}>
               <div className="money-input">
                 <span className="money-prefix">$</span>
@@ -16911,7 +16926,7 @@ function FullBreakdownBySource({ data, view, mult, profile }) {
         )}
       </header>
       {open && <div className="card-body" style={{ overflowX: "auto" }}>
-        <table className="ptable" style={{ minWidth: 500 }}>
+        <table className="ptable" style={{ minWidth: "min(500px, 100%)" }}>
           <thead>
             <tr>
               <th>From</th>
