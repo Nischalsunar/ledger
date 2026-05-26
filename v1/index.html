@@ -4919,6 +4919,17 @@ html[data-color-mode="light"] .date-input { color-scheme: light; }
     z-index: 50;
     background: var(--bg-2);
   }
+  /* When the user hides the sidebar on mobile, the sticky element was still
+     reserving its full ~365px of flow height — pushing the main content down
+     so the page title only appeared near the middle of the screen. Switching
+     to position: absolute removes the flow reservation; the existing transform
+     animation continues to slide it out of view, but the main pane reclaims
+     the top of the viewport immediately. */
+  .app.app-sidebar-hidden .sidebar {
+    position: absolute;
+    top: 0;
+    left: 0;
+  }
   .brand {
     padding: 0 4px 12px;
     margin-bottom: 10px;
