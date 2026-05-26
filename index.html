@@ -5950,6 +5950,119 @@ input[type="radio"]:focus-visible + * {
   border-radius: var(--r);
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+   v2 motion design — pure CSS, hardware-accelerated.
+   Engineering constraints:
+     • Duration 200-300ms (premium speed window, not sluggish, not glitchy).
+     • Easing cubic-bezier(0.4, 0, 0.2, 1) — Material/Fluent ease-in-out,
+       mimics real-world physics for natural-feeling motion.
+     • Animate only transform + opacity (GPU-accelerated, 60fps even on phones).
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Staggered entry — sections fade up 10px with sequential delays so the
+   page reads top-to-bottom as if the eye is drawing it. */
+@keyframes v2-enter {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.v2-enter {
+  animation: v2-enter 280ms cubic-bezier(0.4, 0, 0.2, 1) both;
+  will-change: transform, opacity;
+}
+.v2-enter-0 { animation-delay: 0ms;   }
+.v2-enter-1 { animation-delay: 60ms;  }
+.v2-enter-2 { animation-delay: 120ms; }
+.v2-enter-3 { animation-delay: 180ms; }
+.v2-enter-4 { animation-delay: 240ms; }
+.v2-enter-5 { animation-delay: 300ms; }
+.v2-enter-6 { animation-delay: 360ms; }
+.v2-enter-7 { animation-delay: 420ms; }
+
+/* Sliding nav pill — the active-tab background slides between buttons on
+   tap rather than teleporting. The pill is an absolutely positioned div
+   inside the nav container; its transform + width are updated via inline
+   style when the active tab changes, and the transition does the rest. */
+.nav-pill-track {
+  position: relative;
+}
+.nav-active-pill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  border-radius: 8px;
+  background: var(--accent-bg);
+  transition:
+    transform 240ms cubic-bezier(0.4, 0, 0.2, 1),
+    width     240ms cubic-bezier(0.4, 0, 0.2, 1),
+    opacity   240ms cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 0;
+  pointer-events: none;
+  will-change: transform, width;
+}
+/* When the pill is active, nav-items defer their own background to it so
+   the user sees a single sliding highlight rather than two overlapping ones. */
+.nav-pill-track .nav-item {
+  position: relative;
+  z-index: 1;
+  background: transparent;
+  transition: color 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.nav-pill-track .nav-item.is-active {
+  background: transparent;
+}
+
+/* Category-bar hover (v2 Current "Where it went") — bar fill brightens
+   slightly and the track background deepens, both with a subtle 200ms
+   transition that hints at interactivity without screaming for clicks. */
+.v2-cat-row {
+  transition: padding 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.v2-cat-bar-track {
+  transition: background-color 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.v2-cat-bar-fill {
+  transition:
+    width 320ms cubic-bezier(0.4, 0, 0.2, 1),
+    filter 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.v2-cat-row:hover .v2-cat-bar-fill {
+  filter: brightness(1.08);
+}
+.v2-cat-row:hover .v2-cat-bar-track {
+  background-color: var(--border-2);
+}
+
+/* Micro-hover lift for the inline fixed-load strip — subtle scale + soft
+   shadow on hover. Skipped on touch devices via media query. */
+@media (hover: hover) {
+  .v2-hover-lift {
+    transition:
+      transform 200ms cubic-bezier(0.4, 0, 0.2, 1),
+      box-shadow 200ms cubic-bezier(0.4, 0, 0.2, 1);
+    will-change: transform;
+  }
+  .v2-hover-lift:hover {
+    transform: scale(1.01);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+  }
+}
+
+/* Respect users who explicitly ask for reduced motion — disables all of
+   the above so the interface still works for accessibility users without
+   inflicting vestibular discomfort. */
+@media (prefers-reduced-motion: reduce) {
+  .v2-enter,
+  .nav-active-pill,
+  .v2-cat-bar-fill,
+  .v2-cat-bar-track,
+  .v2-hover-lift {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
 </style>
 <script>(function () { try { var mode = localStorage.getItem("ledger:colorMode"); if (mode !== "dark") { document.documentElement.dataset.colorMode = "light"; var v = {"--bg":"#F5F2EC","--bg-2":"#EEEAE0","--surface":"#FFFFFF","--surface-2":"#FAF7EF","--border":"#E5E0D2","--border-2":"#D3CDBD","--ink":"#1A1F1C","--ink-2":"#3F423E","--ink-3":"#6B7068","--ink-4":"#A0A398","--accent":"#1B4D3E","--accent-2":"#2C6E58","--accent-dim":"#A8C5B7","--accent-bg":"#E5EDE8","--gold":"#A8895A","--gold-dim":"#D4C39A","--positive":"#2C6E58","--negative":"#B2452A","--ai-fab-fg":"#FFFFFF"}; var s = document.documentElement.style; for (var k in v) s.setProperty(k, v[k]); } else { document.documentElement.dataset.colorMode = "dark"; } } catch (e) {} })();</script>
 </head>
@@ -8398,7 +8511,7 @@ function V2HeroCashFlow({ remaining, monthLabel, daysLeft, takeHomeKnown }) {
   const positive = remaining >= 0;
   const color = positive ? "var(--accent)" : "var(--negative)";
   return (
-    <div style={{
+    <div className="v2-enter v2-enter-0" style={{
       padding: "32px 8px 24px",
       borderBottom: "1px solid var(--border)",
       marginBottom: 28,
@@ -8440,7 +8553,7 @@ function V2CategoryBars({ rows }) {
   if (!rows || rows.length === 0) return null;
   const maxPct = Math.max(...rows.map((r) => r.pct), 1);
   return (
-    <div style={{ padding: "8px 8px 24px" }}>
+    <div className="v2-enter v2-enter-3" style={{ padding: "8px 8px 24px" }}>
       <div style={{
         fontSize: 11,
         letterSpacing: "0.16em",
@@ -8455,8 +8568,15 @@ function V2CategoryBars({ rows }) {
         const high = r.pct >= 25;
         const barColor = high ? "var(--gold)" : "var(--accent)";
         const trackWidth = Math.max(3, (r.pct / maxPct) * 100);
+        // Stagger each row by 50ms after the section base delay (180ms),
+        // so bars cascade in: 230, 280, 330, 380, 430, 480ms.
+        const rowDelay = 230 + i * 50;
         return (
-          <div key={r.category} style={{ marginBottom: 18 }}>
+          <div
+            key={r.category}
+            className="v2-cat-row v2-enter"
+            style={{ marginBottom: 18, animationDelay: `${rowDelay}ms` }}
+          >
             <div style={{
               display: "flex", justifyContent: "space-between",
               alignItems: "baseline", marginBottom: 6,
@@ -8473,17 +8593,16 @@ function V2CategoryBars({ rows }) {
                 {window.fmtUSD0(r.dollars)} <span style={{ color: "var(--ink-4)", marginLeft: 8 }}>{r.pct.toFixed(0)}%</span>
               </span>
             </div>
-            <div style={{
+            <div className="v2-cat-bar-track" style={{
               height: 3, width: "100%",
               background: "var(--border)", borderRadius: 2,
               overflow: "hidden",
             }}>
-              <div style={{
+              <div className="v2-cat-bar-fill" style={{
                 height: "100%",
                 width: trackWidth + "%",
                 background: barColor,
                 borderRadius: 2,
-                transition: "width 320ms ease-out",
               }} />
             </div>
           </div>
@@ -8500,7 +8619,7 @@ function V2DailyChart({ data }) {
   const Recharts = window.Recharts;
   if (!Recharts || !data || data.length === 0) return null;
   return (
-    <div style={{ padding: "0 0 16px", height: 180 }}>
+    <div className="v2-enter v2-enter-2" style={{ padding: "0 0 16px", height: 180 }}>
       <div style={{
         fontSize: 11,
         letterSpacing: "0.16em",
@@ -8542,7 +8661,9 @@ function V2DailyChart({ data }) {
             stroke="var(--accent)"
             strokeWidth={2}
             fill="url(#v2CurFill)"
-            isAnimationActive={false}
+            isAnimationActive={true}
+            animationDuration={300}
+            animationEasing="ease-in-out"
           />
         </Recharts.AreaChart>
       </Recharts.ResponsiveContainer>
@@ -8556,11 +8677,12 @@ function V2DailyChart({ data }) {
 function V2FixedLoadInline({ debt }) {
   if (!debt) return null;
   return (
-    <div style={{
+    <div className="v2-enter v2-enter-1 v2-hover-lift" style={{
       padding: "16px 8px 20px",
       marginTop: 4,
       marginBottom: 28,
       borderBottom: "1px solid var(--border)",
+      borderRadius: 8,
       display: "flex",
       justifyContent: "space-between",
       alignItems: "baseline",
@@ -9030,9 +9152,9 @@ function V2Projection() {
         </div>
       </header>
 
-      <div style={bannerStyle}>{bannerCopy}</div>
+      <div className="v2-enter v2-enter-0" style={bannerStyle}>{bannerCopy}</div>
 
-      <section className="card">
+      <section className="card v2-enter v2-enter-1">
         <div className="card-body" style={{ padding: 16 }}>
           {Recharts ? (
             <div style={{ width: "100%", height: 320 }}>
@@ -9072,7 +9194,9 @@ function V2Projection() {
                     stroke="var(--accent)"
                     strokeWidth={2.5}
                     fill="url(#v2NetWorthFill)"
-                    isAnimationActive={false}
+                    isAnimationActive={true}
+                    animationDuration={900}
+                    animationEasing="ease-out"
                   />
                 </Recharts.AreaChart>
               </Recharts.ResponsiveContainer>
@@ -9081,11 +9205,11 @@ function V2Projection() {
         </div>
       </section>
 
-      <section className="card">
+      <section className="card v2-enter v2-enter-2">
         <div className="card-body">
           <ul style={{ margin: 0, paddingLeft: 0, listStyle: "none" }}>
             {bullets.map((b, i) => (
-              <li key={i} style={{
+              <li key={i} className="v2-enter" style={{
                 padding: "10px 0",
                 borderTop: i === 0 ? "none" : "1px solid var(--border)",
                 fontSize: 14,
@@ -9093,6 +9217,7 @@ function V2Projection() {
                 color: "var(--ink-2)",
                 display: "flex",
                 gap: 12,
+                animationDelay: `${280 + i * 80}ms`,
               }}>
                 <span style={{
                   flexShrink: 0, width: 24, height: 24, borderRadius: "50%",
@@ -9126,7 +9251,7 @@ window.V2Projection = V2Projection;
 // the full calculator (budget, debt, investing, taxes, etc.). v1 stays at
 // /v1/index.html and is unchanged.
 
-const { useState: useStateV2, useEffect: useEffectV2 } = React;
+const { useState: useStateV2, useEffect: useEffectV2, useRef: useRefV2, useLayoutEffect: useLayoutEffectV2 } = React;
 
 const V2_TABS = [
   { id: "current",    label: "Current",    glyph: "C" },
@@ -9358,6 +9483,19 @@ function V2Shell() {
     }
   };
 
+  // ── Sliding nav pill — measure the active button's offsetLeft/Width
+  // every time `active` changes so the pill animates between positions.
+  // useLayoutEffect runs synchronously after DOM mutation but before paint,
+  // so the user never sees a flash of mis-positioned pill on first render. ──
+  const navRef = useRefV2(null);
+  const [pillRect, setPillRect] = useStateV2({ x: 0, w: 0, visible: false });
+  useLayoutEffectV2(() => {
+    if (!navRef.current) return;
+    const btn = navRef.current.querySelector(".nav-item.is-active");
+    if (!btn) { setPillRect((r) => ({ ...r, visible: false })); return; }
+    setPillRect({ x: btn.offsetLeft, w: btn.offsetWidth, visible: true });
+  }, [active]);
+
   return (
     <div className={"app" + (sidebarHidden ? " app-sidebar-hidden" : "")}>
       <aside className="sidebar">
@@ -9393,7 +9531,16 @@ function V2Shell() {
         </div>
 
         <div className="nav-section">Ledger</div>
-        <nav className="nav">
+        <nav className="nav nav-pill-track" ref={navRef}>
+          <div
+            className="nav-active-pill"
+            style={{
+              transform: `translateX(${pillRect.x}px)`,
+              width: pillRect.w,
+              opacity: pillRect.visible ? 1 : 0,
+            }}
+            aria-hidden="true"
+          />
           {V2_TABS.map((t) => (
             <button
               key={t.id}

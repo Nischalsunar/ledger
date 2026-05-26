@@ -5950,6 +5950,119 @@ input[type="radio"]:focus-visible + * {
   border-radius: var(--r);
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+   v2 motion design — pure CSS, hardware-accelerated.
+   Engineering constraints:
+     • Duration 200-300ms (premium speed window, not sluggish, not glitchy).
+     • Easing cubic-bezier(0.4, 0, 0.2, 1) — Material/Fluent ease-in-out,
+       mimics real-world physics for natural-feeling motion.
+     • Animate only transform + opacity (GPU-accelerated, 60fps even on phones).
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Staggered entry — sections fade up 10px with sequential delays so the
+   page reads top-to-bottom as if the eye is drawing it. */
+@keyframes v2-enter {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.v2-enter {
+  animation: v2-enter 280ms cubic-bezier(0.4, 0, 0.2, 1) both;
+  will-change: transform, opacity;
+}
+.v2-enter-0 { animation-delay: 0ms;   }
+.v2-enter-1 { animation-delay: 60ms;  }
+.v2-enter-2 { animation-delay: 120ms; }
+.v2-enter-3 { animation-delay: 180ms; }
+.v2-enter-4 { animation-delay: 240ms; }
+.v2-enter-5 { animation-delay: 300ms; }
+.v2-enter-6 { animation-delay: 360ms; }
+.v2-enter-7 { animation-delay: 420ms; }
+
+/* Sliding nav pill — the active-tab background slides between buttons on
+   tap rather than teleporting. The pill is an absolutely positioned div
+   inside the nav container; its transform + width are updated via inline
+   style when the active tab changes, and the transition does the rest. */
+.nav-pill-track {
+  position: relative;
+}
+.nav-active-pill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  border-radius: 8px;
+  background: var(--accent-bg);
+  transition:
+    transform 240ms cubic-bezier(0.4, 0, 0.2, 1),
+    width     240ms cubic-bezier(0.4, 0, 0.2, 1),
+    opacity   240ms cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 0;
+  pointer-events: none;
+  will-change: transform, width;
+}
+/* When the pill is active, nav-items defer their own background to it so
+   the user sees a single sliding highlight rather than two overlapping ones. */
+.nav-pill-track .nav-item {
+  position: relative;
+  z-index: 1;
+  background: transparent;
+  transition: color 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.nav-pill-track .nav-item.is-active {
+  background: transparent;
+}
+
+/* Category-bar hover (v2 Current "Where it went") — bar fill brightens
+   slightly and the track background deepens, both with a subtle 200ms
+   transition that hints at interactivity without screaming for clicks. */
+.v2-cat-row {
+  transition: padding 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.v2-cat-bar-track {
+  transition: background-color 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.v2-cat-bar-fill {
+  transition:
+    width 320ms cubic-bezier(0.4, 0, 0.2, 1),
+    filter 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.v2-cat-row:hover .v2-cat-bar-fill {
+  filter: brightness(1.08);
+}
+.v2-cat-row:hover .v2-cat-bar-track {
+  background-color: var(--border-2);
+}
+
+/* Micro-hover lift for the inline fixed-load strip — subtle scale + soft
+   shadow on hover. Skipped on touch devices via media query. */
+@media (hover: hover) {
+  .v2-hover-lift {
+    transition:
+      transform 200ms cubic-bezier(0.4, 0, 0.2, 1),
+      box-shadow 200ms cubic-bezier(0.4, 0, 0.2, 1);
+    will-change: transform;
+  }
+  .v2-hover-lift:hover {
+    transform: scale(1.01);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+  }
+}
+
+/* Respect users who explicitly ask for reduced motion — disables all of
+   the above so the interface still works for accessibility users without
+   inflicting vestibular discomfort. */
+@media (prefers-reduced-motion: reduce) {
+  .v2-enter,
+  .nav-active-pill,
+  .v2-cat-bar-fill,
+  .v2-cat-bar-track,
+  .v2-hover-lift {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
 </style>
 <script>(function () { try { var mode = localStorage.getItem("ledger:colorMode"); if (mode !== "dark") { document.documentElement.dataset.colorMode = "light"; var v = {"--bg":"#F5F2EC","--bg-2":"#EEEAE0","--surface":"#FFFFFF","--surface-2":"#FAF7EF","--border":"#E5E0D2","--border-2":"#D3CDBD","--ink":"#1A1F1C","--ink-2":"#3F423E","--ink-3":"#6B7068","--ink-4":"#A0A398","--accent":"#1B4D3E","--accent-2":"#2C6E58","--accent-dim":"#A8C5B7","--accent-bg":"#E5EDE8","--gold":"#A8895A","--gold-dim":"#D4C39A","--positive":"#2C6E58","--negative":"#B2452A","--ai-fab-fg":"#FFFFFF"}; var s = document.documentElement.style; for (var k in v) s.setProperty(k, v[k]); } else { document.documentElement.dataset.colorMode = "dark"; } } catch (e) {} })();</script>
 </head>
