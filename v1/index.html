@@ -10971,9 +10971,15 @@ function HouseholdCalculator({ profile, getBudgetData }) {
           }
         };
         setIfDifferent("rent", exp.rent);
-        // Budget combines "utilities" but not "internet" / "other". Map carefully:
-        // keep utilities → utilities, leave internet + other alone (they're Household-only).
-        setIfDifferent("utilities", exp.utilities);
+        // INTENTIONALLY DO NOT pull utilities back from Budget. The forward
+        // sync writes a SUM (Household.utilities + internet + other) into
+        // Budget.utilities. If we then pull Budget.utilities back into
+        // Household.utilities alone, the next forward tick re-aggregates,
+        // adding internet+other AGAIN — runaway inflation that grew the
+        // utilities field by $60 (internet) every 1.5s tick until the user
+        // saw $1,270 in a slot that started as $300. Household is the
+        // authoritative source for the utilities/internet/other breakdown;
+        // Budget's combined utilities field is downstream-only.
         // Budget's groceries (post-split) vs Household's full groceries —
         // when rentSplit > 1 or splitMode != equal, Budget already stores the share,
         // not the full. Only pull groceries when there's no member split (1 member).
