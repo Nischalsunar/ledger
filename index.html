@@ -8353,6 +8353,218 @@ function useDebtSnapshot() {
 }
 window.useDebtSnapshot = useDebtSnapshot;
 
+// ── EXECUTIVE UI HELPERS ─────────────────────────────────────────────────
+// Compact dollar formatter for hero numbers ("$3,420" / "-$1,240" / "$1.2k").
+function fmtDollarsCompact_(n) {
+  const abs = Math.abs(n);
+  if (abs >= 100000) return (n < 0 ? "-$" : "$") + (abs / 1000).toFixed(0) + "k";
+  return (n < 0 ? "-$" : "$") + Math.round(abs).toLocaleString();
+}
+
+// ── Hero: massive Remaining Cash Flow ────────────────────────────────────
+// Renders a single 48px number with a soft subtitle. No card chrome — sits
+// directly on the page background for the premium uncluttered look.
+function V2HeroCashFlow({ remaining, monthLabel, daysLeft, takeHomeKnown }) {
+  const positive = remaining >= 0;
+  const color = positive ? "var(--accent)" : "var(--negative)";
+  return (
+    <div style={{
+      padding: "32px 8px 24px",
+      borderBottom: "1px solid var(--border)",
+      marginBottom: 28,
+    }}>
+      <div style={{
+        fontSize: 11,
+        letterSpacing: "0.16em",
+        textTransform: "uppercase",
+        color: "var(--ink-4)",
+        marginBottom: 10,
+        fontWeight: 500,
+      }}>
+        Remaining cash flow · {monthLabel}
+      </div>
+      <div style={{
+        fontSize: 48,
+        lineHeight: 1.05,
+        fontWeight: 300,
+        color,
+        letterSpacing: "-0.02em",
+        fontFamily: "var(--display)",
+      }}>
+        {takeHomeKnown ? fmtDollarsCompact_(remaining) : "—"}
+      </div>
+      <div style={{ marginTop: 8, fontSize: 13, color: "var(--ink-3)" }}>
+        {takeHomeKnown
+          ? `After spend and debt minimums · ${daysLeft} day${daysLeft === 1 ? "" : "s"} left in the month`
+          : <>Set your salary on{" "}<a href="v1/#budget" style={{ color: "var(--accent)" }}>v1 Budget</a>{" "}to unlock cash flow.</>}
+      </div>
+    </div>
+  );
+}
+
+// ── Category bars: thin progress strips, amber when velocity is high ─────
+// "Velocity high" = category share is >= 25% of total month spend, suggesting
+// the user is leaning hard into that bucket relative to the rest. Bar is 4px
+// tall, accent green normally, soft amber when high. Read-only — no clicks.
+function V2CategoryBars({ rows }) {
+  if (!rows || rows.length === 0) return null;
+  const maxPct = Math.max(...rows.map((r) => r.pct), 1);
+  return (
+    <div style={{ padding: "8px 8px 24px" }}>
+      <div style={{
+        fontSize: 11,
+        letterSpacing: "0.16em",
+        textTransform: "uppercase",
+        color: "var(--ink-4)",
+        marginBottom: 18,
+        fontWeight: 500,
+      }}>
+        Where it went
+      </div>
+      {rows.map((r, i) => {
+        const high = r.pct >= 25;
+        const barColor = high ? "var(--gold)" : "var(--accent)";
+        const trackWidth = Math.max(3, (r.pct / maxPct) * 100);
+        return (
+          <div key={r.category} style={{ marginBottom: 18 }}>
+            <div style={{
+              display: "flex", justifyContent: "space-between",
+              alignItems: "baseline", marginBottom: 6,
+              fontSize: 14, color: "var(--ink-2)",
+            }}>
+              <span>{r.category}{high && (
+                <span style={{
+                  marginLeft: 8, fontSize: 10, letterSpacing: "0.1em",
+                  textTransform: "uppercase", color: "var(--gold)",
+                  fontWeight: 600,
+                }}>high</span>
+              )}</span>
+              <span style={{ color: "var(--ink-3)", fontVariantNumeric: "tabular-nums" }}>
+                {window.fmtUSD0(r.dollars)} <span style={{ color: "var(--ink-4)", marginLeft: 8 }}>{r.pct.toFixed(0)}%</span>
+              </span>
+            </div>
+            <div style={{
+              height: 3, width: "100%",
+              background: "var(--border)", borderRadius: 2,
+              overflow: "hidden",
+            }}>
+              <div style={{
+                height: "100%",
+                width: trackWidth + "%",
+                background: barColor,
+                borderRadius: 2,
+                transition: "width 320ms ease-out",
+              }} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Frameless chart: just the line + gradient fill, no chrome ────────────
+// One AreaChart with a soft gradient. Axes, gridlines, and legend stripped.
+// Tooltip stays minimal: just the date + dollar amount.
+function V2DailyChart({ data }) {
+  const Recharts = window.Recharts;
+  if (!Recharts || !data || data.length === 0) return null;
+  return (
+    <div style={{ padding: "0 0 16px", height: 180 }}>
+      <div style={{
+        fontSize: 11,
+        letterSpacing: "0.16em",
+        textTransform: "uppercase",
+        color: "var(--ink-4)",
+        marginBottom: 6,
+        paddingLeft: 8,
+        fontWeight: 500,
+      }}>
+        Cumulative this month
+      </div>
+      <Recharts.ResponsiveContainer width="100%" height="100%">
+        <Recharts.AreaChart data={data} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
+          <defs>
+            <linearGradient id="v2CurFill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%"   stopColor="var(--accent)" stopOpacity={0.28} />
+              <stop offset="100%" stopColor="var(--accent)" stopOpacity={0.0} />
+            </linearGradient>
+          </defs>
+          {/* Hidden axes — keep them for scaling but render nothing */}
+          <Recharts.XAxis dataKey="day" hide />
+          <Recharts.YAxis hide />
+          <Recharts.Tooltip
+            cursor={{ stroke: "var(--ink-4)", strokeWidth: 1, strokeDasharray: "3 3" }}
+            contentStyle={{
+              background: "var(--surface)",
+              border: "1px solid var(--border)",
+              borderRadius: 6,
+              fontSize: 12,
+              padding: "6px 10px",
+              boxShadow: "0 2px 12px rgba(0,0,0,0.05)",
+            }}
+            formatter={(v) => [window.fmtUSD0(v), "Spent"]}
+            labelFormatter={(d) => `Day ${d}`}
+          />
+          <Recharts.Area
+            type="monotone"
+            dataKey="cumulative"
+            stroke="var(--accent)"
+            strokeWidth={2}
+            fill="url(#v2CurFill)"
+            isAnimationActive={false}
+          />
+        </Recharts.AreaChart>
+      </Recharts.ResponsiveContainer>
+    </div>
+  );
+}
+
+// ── Inline fixed-load summary (replaces the heavy V2FixedLoadCard) ───────
+// One-line reading: contractual debt minimums and principal, with a tiny
+// "manage in v1" link. No KPI grid, no inner table — fits the executive style.
+function V2FixedLoadInline({ debt }) {
+  if (!debt) return null;
+  return (
+    <div style={{
+      padding: "16px 8px 20px",
+      marginTop: 4,
+      marginBottom: 28,
+      borderBottom: "1px solid var(--border)",
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "baseline",
+      flexWrap: "wrap",
+      gap: 16,
+    }}>
+      <div>
+        <div style={{
+          fontSize: 11, letterSpacing: "0.16em", textTransform: "uppercase",
+          color: "var(--ink-4)", marginBottom: 6, fontWeight: 500,
+        }}>
+          Fixed monthly load
+        </div>
+        <div style={{ fontSize: 24, fontWeight: 400, color: "var(--negative)", letterSpacing: "-0.01em" }}>
+          {window.fmtUSD0(debt.minTotal)}
+          <span style={{ fontSize: 13, color: "var(--ink-4)", marginLeft: 10, fontWeight: 400 }}>
+            / month · {debt.debts.length} debt{debt.debts.length === 1 ? "" : "s"}
+          </span>
+        </div>
+      </div>
+      <div style={{ textAlign: "right" }}>
+        <div style={{ fontSize: 12, color: "var(--ink-4)" }}>Principal owed</div>
+        <div style={{ fontSize: 18, color: "var(--ink-2)", fontWeight: 400 }}>
+          {window.fmtUSD0(debt.principalTotal)}
+        </div>
+        <a href="v1/#debt" style={{ fontSize: 11, color: "var(--accent)", textDecoration: "none" }}>
+          manage →
+        </a>
+      </div>
+    </div>
+  );
+}
+
+// Old card kept for non-executive callers. Not used by V2Current anymore.
 function V2FixedLoadCard({ debt }) {
   const fmt = (n) => window.fmtUSD0(n);
   return (
@@ -8410,41 +8622,96 @@ function V2FixedLoadCard({ debt }) {
 
 function V2Current() {
   const transactions = window.useTransactions();
-  const CS = window.CurrentSummary;
   const debt = useDebtSnapshot();
+  const profile = useProfileSnapshot();
 
-  // Tiny "tip strip" so a brand-new user lands here and knows where to go.
-  const isEmpty = !transactions || transactions.length === 0;
+  // ── Derive everything inline; v2 Current no longer borrows v1 CurrentSummary ──
+  const today = new Date();
+  const yyyyMm = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+  const MONTHS_LONG = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  const monthLabel = `${MONTHS_LONG[today.getMonth()]} ${today.getFullYear()}`;
+  const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+  const dayOfMonth = today.getDate();
+  const daysLeft = Math.max(0, daysInMonth - dayOfMonth);
+
+  // This-month transactions
+  const thisMonthTxs = (transactions || []).filter((t) => (t.date || "").startsWith(yyyyMm));
+  const thisMonthCents = window.Transactions.totalCents(thisMonthTxs);
+  const thisMonthDollars = window.toDollars(thisMonthCents);
+
+  // Per-day cumulative for the chart
+  const dailyBuckets = (() => {
+    const buckets = new Array(daysInMonth).fill(0);
+    thisMonthTxs.forEach((t) => {
+      const day = parseInt((t.date || "").slice(8, 10), 10);
+      if (day >= 1 && day <= daysInMonth) buckets[day - 1] += (Number(t.amount_cents) || 0);
+    });
+    let cum = 0;
+    return buckets.map((cents, i) => {
+      cum += cents;
+      return { day: i + 1, cumulative: window.toDollars(cum) };
+    });
+  })();
+  // Only chart through today + 1 so the line doesn't trail across empty future days.
+  const chartData = dailyBuckets.slice(0, Math.min(dayOfMonth, daysInMonth));
+
+  // Category breakdown rows (dollars + share of month)
+  const categoryRows = (() => {
+    const byCat = window.Transactions.byCategory(thisMonthTxs);
+    return Object.entries(byCat)
+      .map(([category, cents]) => ({
+        category,
+        cents,
+        dollars: window.toDollars(cents),
+        pct: thisMonthCents > 0 ? (cents / thisMonthCents) * 100 : 0,
+      }))
+      .sort((a, b) => b.cents - a.cents)
+      .slice(0, 6); // executive view — keep it short
+  })();
+
+  // Remaining cash flow = monthly take-home - month-to-date spend - debt minimums
+  // Only meaningful when profile (salary) is set so window.computeTaxes returns a value.
+  const takeHomeKnown = !!profile && profile.monthlyTakeHome > 0;
+  const debtMin = debt?.minTotal || 0;
+  const remainingCashFlow = takeHomeKnown
+    ? profile.monthlyTakeHome - thisMonthDollars - debtMin
+    : 0;
+
+  const isEmpty = (transactions || []).length === 0;
 
   return (
     <>
-      <header className="page-head">
-        <div>
-          <h1 className="page-title">Current</h1>
-        </div>
-        <div className="page-head-right">
-          <div className="page-sub">
-            Where your money went this month · live as you add entries on Record
-          </div>
-        </div>
+      {/* Minimal page header — kept brief, hero number is the real focal point */}
+      <header className="page-head" style={{ marginBottom: 4 }}>
+        <div><h1 className="page-title">Current</h1></div>
       </header>
 
-      {isEmpty && (
-        <section className="card">
-          <div className="card-body">
-            <p style={{ margin: 0, color: "var(--ink-3)" }}>
-              No transactions yet. Open the{" "}
-              <a href="#record" style={{ color: "var(--accent)" }}>Record</a>{" "}
-              tab to log your first expense — this page will fill in
-              automatically.
-            </p>
-          </div>
-        </section>
+      {/* HERO: 48px Remaining Cash Flow — no box */}
+      <V2HeroCashFlow
+        remaining={remainingCashFlow}
+        monthLabel={monthLabel}
+        daysLeft={daysLeft}
+        takeHomeKnown={takeHomeKnown}
+      />
+
+      {/* Inline fixed-load summary (replaces the boxy debt card) */}
+      <V2FixedLoadInline debt={debt} />
+
+      {isEmpty ? (
+        <div style={{ padding: "32px 8px", textAlign: "center", color: "var(--ink-3)" }}>
+          No transactions yet. Open the{" "}
+          <a href="#record" style={{ color: "var(--accent)" }}>Record</a>{" "}
+          tab to log your first expense — this page will fill in automatically.
+        </div>
+      ) : (
+        <>
+          {/* Frameless chart */}
+          <V2DailyChart data={chartData} />
+
+          {/* Thin category bars */}
+          <V2CategoryBars rows={categoryRows} />
+        </>
       )}
-
-      {debt ? <V2FixedLoadCard debt={debt} /> : null}
-
-      {CS ? <CS transactions={transactions} /> : null}
     </>
   );
 }
