@@ -6017,6 +6017,10 @@ try {
   // Write one key. Debounced per key to avoid hammering Firestore on
   // every keystroke when sliders move.
   const pending = new Map();
+  // Track the most recent successful Firestore write so consumers can render
+  // a sync-status indicator. Updated only on a confirmed write, not on the
+  // debounced enqueue, so the timestamp reflects what's actually in the cloud.
+  let lastSyncAt = null;
   function pushKey(uid, key, value) {
     if (!uid || uid === "_guest") return;
     if (pending.has(key)) clearTimeout(pending.get(key));
@@ -6028,12 +6032,24 @@ try {
         userDocRef(uid).doc(safeKey).set({
           value: value == null ? null : String(value),
           updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-        }, { merge: true }).catch((e) => {
+        }, { merge: true })
+        .then(() => {
+          lastSyncAt = Date.now();
+          // Notify any sync-status listeners (debounced naturally by the 600ms above).
+          try {
+            window.dispatchEvent(new CustomEvent("ledger:cloud-sync", {
+              detail: { key, at: lastSyncAt },
+            }));
+          } catch {}
+        })
+        .catch((e) => {
           console.warn("[firebase-sync] push", key, "failed:", e.message);
         });
       }, 600)
     );
   }
+  // Expose for UI consumers (v2 sidebar sync indicator).
+  function getLastSyncAt() { return lastSyncAt; }
 
   // Firestore doc IDs can't contain "/" — escape it.
   function encodeKey(k) { return k.replace(/\//g, "__"); }
@@ -6084,6 +6100,7 @@ try {
     onAuth, signInEmail, signUpEmail, signInGoogle, signOut,
     pushKey, pullAll, decodeKey, encodeKey,
     writeProfile, listUsers, readUserData,
+    getLastSyncAt,
   };
 
   console.log("[firebase-sync] ready · project ledger-54bbc");

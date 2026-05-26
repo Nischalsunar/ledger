@@ -6017,6 +6017,10 @@ try {
   // Write one key. Debounced per key to avoid hammering Firestore on
   // every keystroke when sliders move.
   const pending = new Map();
+  // Track the most recent successful Firestore write so consumers can render
+  // a sync-status indicator. Updated only on a confirmed write, not on the
+  // debounced enqueue, so the timestamp reflects what's actually in the cloud.
+  let lastSyncAt = null;
   function pushKey(uid, key, value) {
     if (!uid || uid === "_guest") return;
     if (pending.has(key)) clearTimeout(pending.get(key));
@@ -6028,12 +6032,24 @@ try {
         userDocRef(uid).doc(safeKey).set({
           value: value == null ? null : String(value),
           updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-        }, { merge: true }).catch((e) => {
+        }, { merge: true })
+        .then(() => {
+          lastSyncAt = Date.now();
+          // Notify any sync-status listeners (debounced naturally by the 600ms above).
+          try {
+            window.dispatchEvent(new CustomEvent("ledger:cloud-sync", {
+              detail: { key, at: lastSyncAt },
+            }));
+          } catch {}
+        })
+        .catch((e) => {
           console.warn("[firebase-sync] push", key, "failed:", e.message);
         });
       }, 600)
     );
   }
+  // Expose for UI consumers (v2 sidebar sync indicator).
+  function getLastSyncAt() { return lastSyncAt; }
 
   // Firestore doc IDs can't contain "/" — escape it.
   function encodeKey(k) { return k.replace(/\//g, "__"); }
@@ -6084,6 +6100,7 @@ try {
     onAuth, signInEmail, signUpEmail, signInGoogle, signOut,
     pushKey, pullAll, decodeKey, encodeKey,
     writeProfile, listUsers, readUserData,
+    getLastSyncAt,
   };
 
   console.log("[firebase-sync] ready · project ledger-54bbc");
@@ -8854,6 +8871,62 @@ window.exportAllLedgerData = exportAllLedgerData;
 // Signed-in user info + sign-out at the bottom of the sidebar. v1 has a
 // ProfileCorner widget in the top-right of every page; v2 keeps things
 // minimal by tucking the same affordances into the sidebar footer.
+// Format "12s ago", "3m ago", "2h ago" — short relative time for the sync badge.
+function fmtAgo_(ms) {
+  const sec = Math.floor((Date.now() - ms) / 1000);
+  if (sec < 5) return "just now";
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const d = Math.floor(hr / 24);
+  return `${d}d ago`;
+}
+
+function V2SyncStatus({ isSignedIn, isGuest }) {
+  // Re-render every 10s so "12s ago" → "22s ago" stays fresh without burning cycles.
+  const [, force] = useStateV2(0);
+  useEffectV2(() => {
+    const id = setInterval(() => force((n) => n + 1), 10000);
+    const onSync = () => force((n) => n + 1);
+    window.addEventListener("ledger:cloud-sync", onSync);
+    return () => { clearInterval(id); window.removeEventListener("ledger:cloud-sync", onSync); };
+  }, []);
+
+  if (isGuest) {
+    return (
+      <div style={{
+        padding: "8px 10px", marginBottom: 10, fontSize: 11, lineHeight: 1.4,
+        background: "rgba(168, 137, 90, 0.12)",
+        border: "1px solid rgba(168, 137, 90, 0.35)",
+        borderRadius: 4, color: "var(--ink-2)",
+      }}>
+        <strong style={{ color: "var(--gold)" }}>⚠ Local only.</strong>{" "}
+        Data saved to this browser only. Sign in with Google to back up to the cloud.
+      </div>
+    );
+  }
+  if (!isSignedIn) return null;
+
+  const lastSync = window.__firebaseSync?.getLastSyncAt?.() || null;
+  return (
+    <div style={{
+      padding: "8px 10px", marginBottom: 10, fontSize: 11, lineHeight: 1.4,
+      background: "var(--accent-bg)",
+      border: "1px solid var(--accent-dim)",
+      borderRadius: 4, color: "var(--accent)",
+    }}>
+      <div style={{ fontWeight: 600 }}>☁ Cloud backup active</div>
+      <div style={{ marginTop: 2, color: "var(--ink-3)", fontSize: 10 }}>
+        {lastSync
+          ? `Last save ${fmtAgo_(lastSync)}`
+          : "Waiting for next change to sync…"}
+      </div>
+    </div>
+  );
+}
+
 function V2ProfileBlock() {
   const [user, setUser] = useStateV2(() => window.__currentUser || null);
   useEffectV2(() => {
@@ -8871,6 +8944,7 @@ function V2ProfileBlock() {
   }, []);
 
   if (!user) return null;
+  const isGuest = user?.uid === "_guest" || user?.email === "_guest" || !user?.uid;
 
   const email = user.email || "Signed in";
   const initial = (email[0] || "?").toUpperCase();
@@ -8882,6 +8956,7 @@ function V2ProfileBlock() {
 
   return (
     <div style={{ marginTop: "auto", padding: "16px 12px 12px", borderTop: "1px solid var(--border)" }}>
+      <V2SyncStatus isSignedIn={!isGuest} isGuest={isGuest} />
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
         <span
           style={{
