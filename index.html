@@ -8757,6 +8757,173 @@ function V2NetPositionStrip({ accountsSnap, debtSnap }) {
   );
 }
 
+// ── Recommendation engine ────────────────────────────────────────────────
+// computeRecommendations(state) is a pure function — no side effects, no
+// React, no localStorage reads. State comes pre-fetched by the caller so the
+// function is trivially testable. Returns an array of recommendation objects
+// sorted by severity, capped at 2 (per the Executive Recommendations spec).
+//
+// Each rule evaluates a single triggerable insight and returns null when
+// the prerequisites are missing (cold-start safe). Adding a new rule is
+// just a new function in the rules array.
+function computeRecommendations(state) {
+  const { accounts, debt, profile, dailySpend } = state || {};
+
+  const rules = [
+    // ── 1. Emergency Reserve Runway Check ─────────────────────────────
+    // How many months of total outflow do current liquid accounts cover?
+    // Under 3 = critical, build reserves. Over 12 = excess, deploy.
+    function reserveRunway() {
+      if (!accounts || !accounts.totalBalance) return null;
+      // Outflow = recurring debt minimums + observed daily spend × 30
+      const monthlyOutflow = (debt?.minTotal || 0) + (dailySpend || 0) * 30;
+      if (monthlyOutflow <= 0) return null;
+      const runway = accounts.totalBalance / monthlyOutflow;
+      if (runway < 3) {
+        return {
+          id: "reserve-low",
+          tag: "Reserve Guardrail",
+          severity: 0, // critical
+          title: "Build your emergency reserves first",
+          body: `Your liquid accounts cover ${runway.toFixed(1)} months at current outflow. Aim for 3 to 6 months in a HYSA before sending extra money to debt or investments.`,
+        };
+      }
+      if (runway > 12) {
+        return {
+          id: "reserve-excess",
+          tag: "Optimization Opportunity",
+          severity: 3, // low priority — it's a good problem
+          title: "Deploy your excess cash reserves",
+          body: `You're holding over a year of runway in cash. Consider moving some into long-term investments where the higher returns can outpace inflation.`,
+        };
+      }
+      return null;
+    },
+
+    // ── 2. Interest-Rate Arbitrage Optimizer ──────────────────────────
+    // Compare weighted debt APR to accounts blended APY. If debt costs are
+    // materially higher than what cash earns, prioritize debt paydown.
+    function rateArbitrage() {
+      if (!debt || !debt.debts?.length || !debt.principalTotal) return null;
+      if (!accounts) return null;
+      const weightedApr = debt.debts.reduce(
+        (s, d) => s + (Number(d.apr) || 0) * (Number(d.balance) || 0),
+        0
+      ) / debt.principalTotal;
+      const spread = weightedApr - (accounts.weightedApy || 0);
+      if (spread > 0.05) { // 5 percentage-point gap is the threshold
+        const topDebt = [...debt.debts].sort((a, b) => (b.apr || 0) - (a.apr || 0))[0];
+        return {
+          id: "arb-debt-high",
+          tag: "Optimization Opportunity",
+          severity: 1,
+          title: "Attack high-rate debt before saving more",
+          body: `Your ${topDebt.name} at ${(topDebt.apr * 100).toFixed(1)}% APR is costing ${(spread * 100).toFixed(1)} points more than your accounts earn. Funnel extra cash there before adding to investments.`,
+        };
+      }
+      return null;
+    },
+
+    // ── 3. Overhead-to-Income Ratio Monitor ───────────────────────────
+    // Recurring fixed costs (currently: debt minimums) as a share of take-home.
+    // Over 50% is the cliff where small income wobbles cause big stress.
+    function overheadRatio() {
+      if (!profile || !profile.monthlyTakeHome || profile.monthlyTakeHome <= 0) return null;
+      const fixedOverhead = debt?.minTotal || 0;
+      if (fixedOverhead <= 0) return null;
+      const ratio = fixedOverhead / profile.monthlyTakeHome;
+      if (ratio > 0.5) {
+        return {
+          id: "overhead-high",
+          tag: "Overhead Watch",
+          severity: 2,
+          title: "Fixed costs are eating your cash flow",
+          body: `Debt minimums alone consume ${(ratio * 100).toFixed(0)}% of your take-home pay. Look at consolidating or refinancing your highest-rate debt to lower the monthly load.`,
+        };
+      }
+      return null;
+    },
+  ];
+
+  const out = [];
+  for (const rule of rules) {
+    try {
+      const r = rule();
+      if (r) out.push(r);
+    } catch (e) {
+      // Defensive — one rule throwing shouldn't break the others
+      console.warn("[v2 rec engine]", rule.name, e?.message);
+    }
+  }
+  out.sort((a, b) => a.severity - b.severity);
+  return out.slice(0, 2);
+}
+window.computeRecommendations = computeRecommendations;
+
+// ── Recommendation card ──────────────────────────────────────────────────
+// Minimal — eyebrow tag, title, body. No actions, no icons, no buttons.
+function V2RecommendationCard({ rec }) {
+  const tagColor = rec.severity === 0 ? "var(--negative)"
+                : rec.severity === 1 ? "var(--accent)"
+                : rec.severity === 2 ? "var(--gold)"
+                : "var(--ink-3)";
+  return (
+    <div className="v2-hover-lift" style={{
+      padding: "18px 20px",
+      borderRadius: 8,
+      background: "var(--surface)",
+      border: "1px solid var(--border)",
+      marginBottom: 12,
+    }}>
+      <div style={{
+        fontSize: 10,
+        letterSpacing: "0.16em",
+        textTransform: "uppercase",
+        color: tagColor,
+        marginBottom: 8,
+        fontWeight: 600,
+      }}>
+        {rec.tag}
+      </div>
+      <div style={{
+        fontSize: 16,
+        lineHeight: 1.3,
+        color: "var(--ink-2)",
+        fontWeight: 500,
+        marginBottom: 6,
+      }}>
+        {rec.title}
+      </div>
+      <div style={{
+        fontSize: 13,
+        lineHeight: 1.5,
+        color: "var(--ink-3)",
+      }}>
+        {rec.body}
+      </div>
+    </div>
+  );
+}
+
+function V2ExecutiveRecommendations({ recs }) {
+  if (!recs || recs.length === 0) return null;
+  return (
+    <div className="v2-enter v2-enter-4" style={{ padding: "16px 8px 24px" }}>
+      <div style={{
+        fontSize: 11,
+        letterSpacing: "0.16em",
+        textTransform: "uppercase",
+        color: "var(--ink-4)",
+        marginBottom: 14,
+        fontWeight: 500,
+      }}>
+        Executive recommendations
+      </div>
+      {recs.map((r) => <V2RecommendationCard key={r.id} rec={r} />)}
+    </div>
+  );
+}
+
 // ── Category bars: thin progress strips, amber when velocity is high ─────
 // "Velocity high" = category share is >= 25% of total month spend, suggesting
 // the user is leaning hard into that bucket relative to the rest. Bar is 4px
@@ -9042,6 +9209,16 @@ function V2Current() {
     ? profile.monthlyTakeHome - thisMonthDollars - debtMin
     : 0;
 
+  // Rolling daily spend for the recommendation engine. Falls back to month-to-date
+  // average if there's not enough history yet. Returns 0 when no transactions exist.
+  const dailySpend = dayOfMonth > 0 ? thisMonthDollars / dayOfMonth : 0;
+
+  // Recommendation engine — pure function, returns at most 2 cards. Empty array
+  // when the user is in cold start (no accounts, no debts, no profile).
+  const recommendations = computeRecommendations({
+    accounts, debt, profile, dailySpend,
+  });
+
   const isEmpty = (transactions || []).length === 0;
 
   return (
@@ -9080,6 +9257,9 @@ function V2Current() {
           <V2CategoryBars rows={categoryRows} />
         </>
       )}
+
+      {/* Executive recommendations — capped at 2 cards, hidden in cold start */}
+      <V2ExecutiveRecommendations recs={recommendations} />
     </>
   );
 }
