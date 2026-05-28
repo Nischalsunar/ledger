@@ -7811,7 +7811,7 @@ function formatDayHeader(iso) {
 }
 
 // ─── Entry form ──────────────────────────────────────────────────────────
-function RecordEntryForm({ editing, onCancelEdit }) {
+function RecordEntryForm({ editing, onCancelEdit, executiveStyle }) {
   // Local string state for the amount field so we can validate before parsing.
   const [amountStr, setAmountStr] = useStateRec("");
   const [category, setCategory] = useStateRec("Groceries");
@@ -7893,6 +7893,106 @@ function RecordEntryForm({ editing, onCancelEdit }) {
 
   const showCancel = !!editing;
 
+  // ── Executive vs traditional shell ────────────────────────────────────
+  // In v2, the form is rendered without card chrome and with an eyebrow-style
+  // section label matching the rest of the v2 aesthetic. In v1, the existing
+  // card layout is preserved unchanged.
+  if (executiveStyle) {
+    return (
+      <div style={{ padding: "16px 8px 24px", borderBottom: "1px solid var(--border)", marginBottom: 24 }}>
+        <div style={{
+          display: "flex", justifyContent: "space-between", alignItems: "baseline",
+          marginBottom: 14,
+        }}>
+          <div style={{
+            fontSize: 11, letterSpacing: "0.16em", textTransform: "uppercase",
+            color: "var(--ink-4)", fontWeight: 500,
+          }}>
+            {editing ? "Edit entry" : "New entry"}
+          </div>
+          {window.AutoSaveIndicator && (
+            <window.AutoSaveIndicator value={[amountStr, category, date, note]} />
+          )}
+        </div>
+        <form onSubmit={submit} noValidate>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
+            <Field label="Amount" hint={error ? <span style={{color:"var(--negative)"}}>{error}</span> : "what did you spend?"}>
+              <div className="money-input">
+                <span className="money-prefix">$</span>
+                <input
+                  ref={amountRef}
+                  type="text"
+                  inputMode="decimal"
+                  value={amountStr}
+                  onChange={(e) => { setAmountStr(e.target.value); if (error) setError(""); }}
+                  placeholder="0.00"
+                  aria-invalid={!!error}
+                />
+              </div>
+            </Field>
+            <Field label="Category" hint="what was it for?">
+              <input
+                type="text"
+                className="text-input"
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                list="record-cat-list"
+                placeholder="Groceries"
+              />
+              <datalist id="record-cat-list">
+                {RECORD_CATEGORIES.map((c) => <option key={c} value={c} />)}
+              </datalist>
+            </Field>
+            <Field label="Date" hint="when?">
+              <input
+                type="date"
+                className="text-input"
+                value={date}
+                onChange={(e) => setDate(e.target.value || todayISO_())}
+                max={todayISO_()}
+              />
+            </Field>
+          </div>
+
+          <Field label="Note" hint="optional · 500 chars max">
+            <input
+              type="text"
+              className="text-input"
+              value={note}
+              onChange={(e) => setNote(e.target.value.slice(0, 500))}
+              placeholder="e.g. weekly Whole Foods run"
+            />
+          </Field>
+
+          {/* Quick-add category chips */}
+          <div className="port-presets" style={{ marginTop: 10, marginBottom: 14 }}>
+            {RECORD_CATEGORIES.map((c) => (
+              <button
+                key={c}
+                type="button"
+                className={"port-preset-btn" + (category === c ? " is-active" : "")}
+                style={category === c ? { background: "var(--accent-bg)", borderColor: "var(--accent)" } : {}}
+                onClick={() => setCategory(c)}
+              >{c}</button>
+            ))}
+          </div>
+
+          <div style={{ display: "flex", gap: 10 }}>
+            <button type="submit" className="btn-primary">
+              {editing ? "Save changes" : "Add entry"}
+            </button>
+            {showCancel && (
+              <button type="button" className="btn-ghost" onClick={() => { onCancelEdit && onCancelEdit(); reset(); }}>
+                Cancel
+              </button>
+            )}
+          </div>
+        </form>
+      </div>
+    );
+  }
+
+  // ── Traditional v1 card layout ──
   return (
     <section className="card">
       <header className="card-head">
@@ -7996,7 +8096,7 @@ const DATE_RANGE_PRESETS = [
   { id: "all",     label: "All time" },
 ];
 
-function RecordTimeline({ transactions, onEdit, onDelete }) {
+function RecordTimeline({ transactions, onEdit, onDelete, executiveStyle }) {
   const [query, setQuery] = useStateRec("");
   const [categoryFilter, setCategoryFilter] = useStateRec("");
   const [rangeId, setRangeId] = useStateRec("month");
@@ -8043,6 +8143,19 @@ function RecordTimeline({ transactions, onEdit, onDelete }) {
 
   // ── Empty state for the whole tab (no entries at all) ─────────────────
   if (allEmpty) {
+    if (executiveStyle) {
+      return (
+        <div style={{ padding: "16px 8px" }}>
+          <div style={{
+            fontSize: 11, letterSpacing: "0.16em", textTransform: "uppercase",
+            color: "var(--ink-4)", marginBottom: 14, fontWeight: 500,
+          }}>Timeline</div>
+          <div style={{ padding: "24px 0", color: "var(--ink-3)", fontSize: 14 }}>
+            No entries yet. Add your first expense above ↑
+          </div>
+        </div>
+      );
+    }
     return (
       <section className="card">
         <header className="card-head"><h2>Timeline</h2></header>
@@ -8058,125 +8171,163 @@ function RecordTimeline({ transactions, onEdit, onDelete }) {
   const filteredTotal = window.Transactions.totalCents(filtered);
   const days = window.Transactions.byDay(filtered);
 
-  return (
-    <section className="card">
-      <header className="card-head">
-        <h2>Timeline</h2>
-        <span className="card-tag">
-          {hasFilter ? (
-            <>{filtered.length} of {transactions.length} entr{transactions.length === 1 ? "y" : "ies"} · {fmtUSD0(window.toDollars(filteredTotal))}</>
-          ) : (
-            <>{transactions.length} entr{transactions.length === 1 ? "y" : "ies"} · {fmtUSD0(window.toDollars(window.Transactions.totalCents(transactions)))} total</>
-          )}
-        </span>
-      </header>
-
-      {/* ── Filter strip ─────────────────────────────────────────────── */}
+  const v1Header = (
+    <header className="card-head">
+      <h2>Timeline</h2>
+      <span className="card-tag">
+        {hasFilter ? (
+          <>{filtered.length} of {transactions.length} entr{transactions.length === 1 ? "y" : "ies"} · {fmtUSD0(window.toDollars(filteredTotal))}</>
+        ) : (
+          <>{transactions.length} entr{transactions.length === 1 ? "y" : "ies"} · {fmtUSD0(window.toDollars(window.Transactions.totalCents(transactions)))} total</>
+        )}
+      </span>
+    </header>
+  );
+  const execHeader = (
+    <div style={{
+      display: "flex", justifyContent: "space-between", alignItems: "baseline",
+      marginBottom: 14,
+    }}>
       <div style={{
-        padding: "12px 16px",
-        display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center",
-        borderBottom: "1px solid var(--border)",
-        background: "var(--surface-2)",
-      }}>
-        <input
-          type="search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search notes, category, amount…"
-          style={{
-            flex: "1 1 220px", minWidth: 0, padding: "6px 10px", fontSize: 13,
-            border: "1px solid var(--border)", borderRadius: 4,
-            background: "var(--surface)", color: "var(--ink-2)",
-          }}
-        />
-        <select
-          value={categoryFilter}
-          onChange={(e) => setCategoryFilter(e.target.value)}
-          style={{
-            padding: "6px 10px", fontSize: 13,
-            border: "1px solid var(--border)", borderRadius: 4,
-            background: "var(--surface)", color: "var(--ink-2)",
-          }}
-          title="Filter by category"
-        >
-          <option value="">All categories</option>
-          {categoryOptions.map((c) => (<option key={c} value={c}>{c}</option>))}
-        </select>
-        <div style={{ display: "inline-flex", border: "1px solid var(--border)", borderRadius: 4, overflow: "hidden" }}>
-          {DATE_RANGE_PRESETS.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              onClick={() => setRangeId(p.id)}
-              style={{
-                padding: "6px 10px", fontSize: 12,
-                border: "none", borderLeft: p.id === "month" ? "none" : "1px solid var(--border)",
-                background: rangeId === p.id ? "var(--accent-bg)" : "var(--surface)",
-                color: rangeId === p.id ? "var(--accent)" : "var(--ink-3)",
-                fontWeight: rangeId === p.id ? 600 : 400,
-                cursor: "pointer",
-              }}
-              title={p.label}
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
-        {hasFilter && (
+        fontSize: 11, letterSpacing: "0.16em", textTransform: "uppercase",
+        color: "var(--ink-4)", fontWeight: 500,
+      }}>Timeline</div>
+      <div style={{ fontSize: 11, color: "var(--ink-4)" }}>
+        {hasFilter
+          ? <>{filtered.length} of {transactions.length} · {fmtUSD0(window.toDollars(filteredTotal))}</>
+          : <>{transactions.length} entr{transactions.length === 1 ? "y" : "ies"} · {fmtUSD0(window.toDollars(window.Transactions.totalCents(transactions)))}</>
+        }
+      </div>
+    </div>
+  );
+
+  // Shared inner content (filter strip + day list). Same UX in both shells —
+  // only the outer wrapper changes between executive and v1 layouts.
+  const filterStrip = (
+    <div style={{
+      padding: executiveStyle ? "12px 0" : "12px 16px",
+      display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center",
+      borderBottom: "1px solid var(--border)",
+      background: executiveStyle ? "transparent" : "var(--surface-2)",
+    }}>
+      <input
+        type="search"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Search notes, category, amount…"
+        style={{
+          flex: "1 1 220px", minWidth: 0, padding: "6px 10px", fontSize: 13,
+          border: "1px solid var(--border)", borderRadius: 4,
+          background: "var(--surface)", color: "var(--ink-2)",
+        }}
+      />
+      <select
+        value={categoryFilter}
+        onChange={(e) => setCategoryFilter(e.target.value)}
+        style={{
+          padding: "6px 10px", fontSize: 13,
+          border: "1px solid var(--border)", borderRadius: 4,
+          background: "var(--surface)", color: "var(--ink-2)",
+        }}
+        title="Filter by category"
+      >
+        <option value="">All categories</option>
+        {categoryOptions.map((c) => (<option key={c} value={c}>{c}</option>))}
+      </select>
+      <div style={{ display: "inline-flex", border: "1px solid var(--border)", borderRadius: 4, overflow: "hidden" }}>
+        {DATE_RANGE_PRESETS.map((p) => (
           <button
+            key={p.id}
             type="button"
-            onClick={resetFilters}
+            onClick={() => setRangeId(p.id)}
             style={{
               padding: "6px 10px", fontSize: 12,
-              border: "1px solid var(--border)", borderRadius: 4,
-              background: "transparent", color: "var(--ink-3)", cursor: "pointer",
+              border: "none", borderLeft: p.id === "month" ? "none" : "1px solid var(--border)",
+              background: rangeId === p.id ? "var(--accent-bg)" : "var(--surface)",
+              color: rangeId === p.id ? "var(--accent)" : "var(--ink-3)",
+              fontWeight: rangeId === p.id ? 600 : 400,
+              cursor: "pointer",
             }}
-            title="Clear all filters"
+            title={p.label}
           >
-            Reset
+            {p.label}
           </button>
-        )}
-      </div>
-
-      <div className="card-body" style={{ padding: 0 }}>
-        {filtered.length === 0 ? (
-          <div className="port-empty" style={{ padding: 24 }}>
-            No entries match these filters.{" "}
-            <button className="btn-link" onClick={resetFilters} style={{ background: "none", border: "none", color: "var(--accent)", cursor: "pointer", padding: 0, font: "inherit", textDecoration: "underline" }}>
-              Reset filters
-            </button>{" "}
-            to see all {transactions.length} entr{transactions.length === 1 ? "y" : "ies"}.
-          </div>
-        ) : days.map((day) => (
-          <div key={day.date} className="record-day">
-            <div className="record-day-head">
-              <div className="record-day-date">{formatDayHeader(day.date)}</div>
-              <div className="record-day-total">{fmtUSD0(window.toDollars(day.total_cents))}</div>
-            </div>
-            {day.items.map((tx) => (
-              <div key={tx.id} className="record-item">
-                <div className="record-item-main">
-                  <span className="record-item-category">{tx.category}</span>
-                  {tx.note && <span className="record-item-note"> · {tx.note}</span>}
-                </div>
-                <div className="record-item-amount">
-                  {fmtUSD0(window.toDollars(tx.amount_cents))}
-                </div>
-                <div className="record-item-actions">
-                  <button className="btn-link" onClick={() => onEdit(tx)} title="Edit">edit</button>
-                  <button className="btn-link record-item-delete"
-                    onClick={() => {
-                      if (window.confirm(`Delete this $${window.toDollars(tx.amount_cents).toFixed(2)} ${tx.category} entry?`)) {
-                        onDelete(tx.id);
-                      }
-                    }}
-                    title="Delete">delete</button>
-                </div>
-              </div>
-            ))}
-          </div>
         ))}
       </div>
+      {hasFilter && (
+        <button
+          type="button"
+          onClick={resetFilters}
+          style={{
+            padding: "6px 10px", fontSize: 12,
+            border: "1px solid var(--border)", borderRadius: 4,
+            background: "transparent", color: "var(--ink-3)", cursor: "pointer",
+          }}
+          title="Clear all filters"
+        >
+          Reset
+        </button>
+      )}
+    </div>
+  );
+
+  const dayList = (
+    <div className={executiveStyle ? "" : "card-body"} style={executiveStyle ? { padding: 0 } : { padding: 0 }}>
+      {filtered.length === 0 ? (
+        <div className="port-empty" style={{ padding: 24 }}>
+          No entries match these filters.{" "}
+          <button className="btn-link" onClick={resetFilters} style={{ background: "none", border: "none", color: "var(--accent)", cursor: "pointer", padding: 0, font: "inherit", textDecoration: "underline" }}>
+            Reset filters
+          </button>{" "}
+          to see all {transactions.length} entr{transactions.length === 1 ? "y" : "ies"}.
+        </div>
+      ) : days.map((day) => (
+        <div key={day.date} className="record-day">
+          <div className="record-day-head">
+            <div className="record-day-date">{formatDayHeader(day.date)}</div>
+            <div className="record-day-total">{fmtUSD0(window.toDollars(day.total_cents))}</div>
+          </div>
+          {day.items.map((tx) => (
+            <div key={tx.id} className="record-item">
+              <div className="record-item-main">
+                <span className="record-item-category">{tx.category}</span>
+                {tx.note && <span className="record-item-note"> · {tx.note}</span>}
+              </div>
+              <div className="record-item-amount">
+                {fmtUSD0(window.toDollars(tx.amount_cents))}
+              </div>
+              <div className="record-item-actions">
+                <button className="btn-link" onClick={() => onEdit(tx)} title="Edit">edit</button>
+                <button className="btn-link record-item-delete"
+                  onClick={() => {
+                    if (window.confirm(`Delete this $${window.toDollars(tx.amount_cents).toFixed(2)} ${tx.category} entry?`)) {
+                      onDelete(tx.id);
+                    }
+                  }}
+                  title="Delete">delete</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+
+  if (executiveStyle) {
+    return (
+      <div style={{ padding: "16px 8px 24px" }}>
+        {execHeader}
+        {filterStrip}
+        {dayList}
+      </div>
+    );
+  }
+
+  return (
+    <section className="card">
+      {v1Header}
+      {filterStrip}
+      {dayList}
     </section>
   );
 }
@@ -8405,7 +8556,7 @@ function exportTransactionsCSV(transactions) {
   setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 0);
 }
 
-function RecordTab({ hideSummary, hideHeader } = {}) {
+function RecordTab({ hideSummary, hideHeader, executiveStyle } = {}) {
   const transactions = window.useTransactions();
   const [editing, setEditing] = useStateRec(null);
   const canExport = (transactions || []).length > 0;
@@ -8470,6 +8621,7 @@ function RecordTab({ hideSummary, hideHeader } = {}) {
       <RecordEntryForm
         editing={editing}
         onCancelEdit={() => setEditing(null)}
+        executiveStyle={executiveStyle}
       />
 
       <RecordTimeline
@@ -8479,6 +8631,7 @@ function RecordTab({ hideSummary, hideHeader } = {}) {
           if (editing && editing.id === id) setEditing(null);
           window.Transactions.remove(id);
         }}
+        executiveStyle={executiveStyle}
       />
     </>
   );
@@ -9874,7 +10027,9 @@ function V2Shell() {
       case "projection": return window.V2Projection ? <window.V2Projection /> : null;
       case "record":
         // hideSummary because the v2 Current tab already shows the summary.
-        return window.RecordTab ? <window.RecordTab hideSummary={true} /> : null;
+        // executiveStyle strips card chrome + uses eyebrow section labels to
+        // match the v2 Current/Projection aesthetic instead of v1's traditional layout.
+        return window.RecordTab ? <window.RecordTab hideSummary={true} executiveStyle={true} /> : null;
       default:           return null;
     }
   };
