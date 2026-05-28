@@ -8706,6 +8706,57 @@ function V2HeroCashFlow({ remaining, monthLabel, daysLeft, takeHomeKnown }) {
   );
 }
 
+// ── Net Position strip ───────────────────────────────────────────────────
+// Computed property: sum(accounts.balance) - sum(debts.principal). Single
+// snapshot number that tells the user "where you stand TODAY" (vs the hero
+// cash-flow number which describes "how this month is going"). Read-only,
+// hidden when neither accounts nor debts are configured. Spec calls this
+// the overarching Net Position total.
+function V2NetPositionStrip({ accountsSnap, debtSnap }) {
+  const totalAssets = accountsSnap?.totalBalance || 0;
+  const totalDebt = debtSnap?.principalTotal || 0;
+  // Hide entirely if the user has neither side of the equation — a $0 strip
+  // would add noise without information.
+  if (totalAssets === 0 && totalDebt === 0) return null;
+  const netPosition = totalAssets - totalDebt;
+  const positive = netPosition >= 0;
+  const color = positive ? "var(--accent)" : "var(--negative)";
+  return (
+    <div className="v2-enter v2-enter-1" style={{
+      padding: "20px 8px 22px",
+      marginBottom: 24,
+      borderBottom: "1px solid var(--border)",
+    }}>
+      <div style={{
+        fontSize: 11,
+        letterSpacing: "0.16em",
+        textTransform: "uppercase",
+        color: "var(--ink-4)",
+        marginBottom: 8,
+        fontWeight: 500,
+      }}>
+        Net position today
+      </div>
+      <div style={{
+        fontSize: 30,
+        lineHeight: 1.1,
+        fontWeight: 400,
+        color,
+        letterSpacing: "-0.01em",
+        fontFamily: "var(--display)",
+      }}>
+        {fmtDollarsCompact_(netPosition)}
+      </div>
+      <div style={{ marginTop: 6, fontSize: 12, color: "var(--ink-3)" }}>
+        {window.fmtUSD0(totalAssets)} in accounts
+        {" − "}
+        <span style={{ color: "var(--negative)" }}>{window.fmtUSD0(totalDebt)}</span>
+        {" in debt principal"}
+      </div>
+    </div>
+  );
+}
+
 // ── Category bars: thin progress strips, amber when velocity is high ─────
 // "Velocity high" = category share is >= 25% of total month spend, suggesting
 // the user is leaning hard into that bucket relative to the rest. Bar is 4px
@@ -8937,6 +8988,7 @@ function V2Current() {
   const transactions = window.useTransactions();
   const debt = useDebtSnapshot();
   const profile = useProfileSnapshot();
+  const accounts = useAccountsSnapshot();
 
   // ── Derive everything inline; v2 Current no longer borrows v1 CurrentSummary ──
   const today = new Date();
@@ -9006,6 +9058,9 @@ function V2Current() {
         daysLeft={daysLeft}
         takeHomeKnown={takeHomeKnown}
       />
+
+      {/* Net Position computed property — assets − debt principal */}
+      <V2NetPositionStrip accountsSnap={accounts} debtSnap={debt} />
 
       {/* Inline fixed-load summary (replaces the boxy debt card) */}
       <V2FixedLoadInline debt={debt} />
