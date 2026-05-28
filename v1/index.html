@@ -17645,6 +17645,7 @@ function NetWorthCard({ data, profile }) {
               value={((a.apy || 0) * 100).toFixed(2)}
               onChange={(v) => updAccount(a.id, { apy: Math.max(0, (Number(v) || 0) / 100) })}
               suffix="% APY"
+              min={0}
             />
             <button className="icon-btn" onClick={() => delAccount(a.id)} title="Remove account">×</button>
           </div>
