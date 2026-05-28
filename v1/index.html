@@ -7349,9 +7349,16 @@ const CountUp = ({ value, duration = 1, format = fmtUSD0, className, style }) =>
   return <span className={className} style={style}>{format(display)}</span>;
 };
 
-const NumberInput = ({ value, onChange, suffix, placeholder, step = 0.1 }) => {
+// NumberInput accepts an optional `min` prop. When set, any committed value
+// is clamped to >= min. The negative-sign character is also stripped from
+// the input regex when min >= 0, so the user can't even *type* a minus —
+// the field rejects negatives both on input and on commit. Used to guard
+// rate fields (APR, savings APY, growth assumptions) where a negative is
+// physically meaningless and would silently break compound math downstream.
+const NumberInput = ({ value, onChange, suffix, placeholder, step = 0.1, min }) => {
   const [focused, setFocused] = useStateShared(false);
   const [localText, setLocalText] = useStateShared("");
+  const allowNegative = min == null || min < 0;
   // Strip floating-point noise (e.g. 0.07 * 100 = 7.000000000000001 → "7")
   const cleanNum = (n) => {
     if (n === null || n === undefined || n === "" || !isFinite(n)) return "";
@@ -7361,6 +7368,8 @@ const NumberInput = ({ value, onChange, suffix, placeholder, step = 0.1 }) => {
   const display = focused
     ? localText
     : (value || value === 0 ? cleanNum(value) : "");
+  // Pick the regex based on whether negatives are allowed.
+  const stripPattern = allowNegative ? /[^0-9.\-]/g : /[^0-9.]/g;
   return (
     <div className={"money-input" + (focused ? " is-focused" : "")}>
       <input
@@ -7371,14 +7380,16 @@ const NumberInput = ({ value, onChange, suffix, placeholder, step = 0.1 }) => {
         onFocus={() => { setFocused(true); setLocalText(value === 0 || value == null ? "" : cleanNum(value)); }}
         onBlur={() => setFocused(false)}
         onChange={(e) => {
-          const raw = e.target.value.replace(/[^0-9.\-]/g, "");
+          const raw = e.target.value.replace(stripPattern, "");
           setLocalText(raw);
           // Allow partial values like "5.", ".", "-" while typing without losing the decimal
           if (raw === "" || raw === "." || raw === "-" || raw === "-.") {
-            onChange(0);
+            onChange(min != null ? Math.max(min, 0) : 0);
           } else {
             const n = Number(raw);
-            if (isFinite(n)) onChange(n);
+            if (isFinite(n)) {
+              onChange(min != null ? Math.max(min, n) : n);
+            }
           }
         }}
       />
@@ -12282,14 +12293,14 @@ function PortfolioEditor({ portfolio, setPortfolio, rateMode = "annual", totalMo
         <div className="port-row">
           <span className="port-dot" style={{ background: cashColor1 }} />
           <span className="port-name port-name-fixed">Emergency fund</span>
-          <NumberInput value={(portfolio.emergency * 100).toFixed(1)} onChange={(v) => updateCash("emergency", v)} suffix="%" />
+          <NumberInput value={(portfolio.emergency * 100).toFixed(1)} onChange={(v) => updateCash("emergency", v)} suffix="%" min={0} />
           <span className="port-fixed">cash</span>
           <span></span>
         </div>
         <div className="port-row">
           <span className="port-dot" style={{ background: cashColor2 }} />
           <span className="port-name port-name-fixed">Reserve</span>
-          <NumberInput value={(portfolio.reserve * 100).toFixed(1)} onChange={(v) => updateCash("reserve", v)} suffix="%" />
+          <NumberInput value={(portfolio.reserve * 100).toFixed(1)} onChange={(v) => updateCash("reserve", v)} suffix="%" min={0} />
           <span className="port-fixed">cash</span>
           <span></span>
         </div>
@@ -12385,6 +12396,7 @@ function PortfolioEditor({ portfolio, setPortfolio, rateMode = "annual", totalMo
                         value={(m.pct * 100).toFixed(1)}
                         onChange={(v) => updateInvestment(m.id, { pct: v / 100 })}
                         suffix="%"
+                        min={0}
                       />
                       {totalMonthly > 0 && !m.compound && (
                         <Money
@@ -12456,6 +12468,7 @@ function PortfolioEditor({ portfolio, setPortfolio, rateMode = "annual", totalMo
                         });
                       }}
                       suffix="%"
+                      min={0}
                     />
                   </Field>
                   <Field label="Platform" hint="brokerage / exchange">
@@ -14147,7 +14160,7 @@ function AutoLoan({ getBudgetData }) {
             <header className="card-head"><h2>Loan terms</h2></header>
             <div className="card-body stack">
               <Field label="APR">
-                <NumberInput value={(v.apr * 100).toFixed(2)} onChange={(x) => upd("apr", x / 100)} suffix="%" />
+                <NumberInput value={(v.apr * 100).toFixed(2)} onChange={(x) => upd("apr", x / 100)} suffix="%" min={0} />
               </Field>
               <Field label="Term">
                 <Segment
@@ -15451,7 +15464,7 @@ function DebtPayoff({ getBudgetData }) {
                     <div className="split-bar-debt" style={{ width: ((useCustom?effectivePct:debtPct)*100) + "%" }} />
                   </div>
                   <Field label="Savings APY" hint="high-yield savings, etc.">
-                    <NumberInput value={(savingsAPY * 100).toFixed(2)} onChange={(v) => setSavingsAPY(v / 100)} suffix="%" />
+                    <NumberInput value={(savingsAPY * 100).toFixed(2)} onChange={(v) => setSavingsAPY(v / 100)} suffix="%" min={0} />
                   </Field>
                   <Field label="Payment frequency" hint={paymentFreq === 1 ? "applied each month" : `lump sum every ${paymentFreq} months`}>
                     <Segment
@@ -15730,7 +15743,7 @@ function DebtPayoff({ getBudgetData }) {
                         <Money value={d.balance} onChange={(v) => updDebt(i, "balance", v)} />
                       </Field>
                       <Field label="APR" hint={typeInfo.label.toLowerCase() + " typical"}>
-                        <NumberInput value={(d.apr * 100).toFixed(2)} onChange={(v) => updDebt(i, "apr", v / 100)} suffix="%" />
+                        <NumberInput value={(d.apr * 100).toFixed(2)} onChange={(v) => updDebt(i, "apr", v / 100)} suffix="%" min={0} />
                       </Field>
                       <Field
                         label={<>Min / mo {manualMode && <span title="Locked: manual mode is on" style={{ marginLeft: 4 }}>🔒</span>}</>}
@@ -20073,7 +20086,7 @@ function DebtPhase({ data, setData }) {
                         onChange={(e) => updDebt(d.id, "name", e.target.value)}
                       />
                       <Money value={d.balance} onChange={(v) => updDebt(d.id, "balance", v)} placeholder="balance" />
-                      <NumberInput value={(d.apr * 100).toFixed(1)} onChange={(v) => updDebt(d.id, "apr", v / 100)} suffix="%" />
+                      <NumberInput value={(d.apr * 100).toFixed(1)} onChange={(v) => updDebt(d.id, "apr", v / 100)} suffix="%" min={0} />
                       <button className="icon-btn" onClick={() => removeDebt(d.id)}>×</button>
                     </div>
                     <div className="onb-debt-meta">
