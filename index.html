@@ -10473,12 +10473,60 @@ function V2Shell() {
   // ── Sliding pill on the top nav tabs ──
   const tabsRef = useRefV2(null);
   const [pillRect, setPillRect] = useStateV2({ x: 0, w: 0, visible: false });
-  useLayoutEffectV2(() => {
+  const measurePill = React.useCallback(() => {
     if (!tabsRef.current) return;
     const btn = tabsRef.current.querySelector(".v2-topnav-tab.is-active");
     if (!btn) { setPillRect((r) => ({ ...r, visible: false })); return; }
-    setPillRect({ x: btn.offsetLeft, w: btn.offsetWidth, visible: true });
-  }, [active]);
+    setPillRect((prev) =>
+      prev.x === btn.offsetLeft && prev.w === btn.offsetWidth && prev.visible
+        ? prev
+        : { x: btn.offsetLeft, w: btn.offsetWidth, visible: true }
+    );
+  }, []);
+  useLayoutEffectV2(() => { measurePill(); }, [active, measurePill]);
+  // Re-measure whenever the tab strip reflows. The Inter web font loads
+  // asynchronously and changes tab widths after the first paint, which would
+  // otherwise leave the pill at a stale offset; viewport resizes and font
+  // swaps both need a fresh measurement. A ResizeObserver on the tab buttons
+  // fires precisely when their geometry changes, covering every case.
+  useEffectV2(() => {
+    // The first synchronous measurement (in useLayoutEffect) runs before the
+    // Inter web font swaps in, which then widens the sibling tabs and shifts
+    // the active tab's offsetLeft. Re-measure whenever the strip reflows.
+    // NOTE: call measurePill DIRECTLY rather than via requestAnimationFrame —
+    // rAF callbacks never fire while the tab is hidden, which would strand the
+    // pill at its stale pre-font-swap offset. measurePill is cheap and the
+    // setPillRect guard makes redundant calls no-ops.
+    measurePill();
+    const timers = [
+      setTimeout(measurePill, 120),
+      setTimeout(measurePill, 350),
+      setTimeout(measurePill, 800),
+      setTimeout(measurePill, 1600),
+    ];
+    window.addEventListener("resize", measurePill);
+    // If the page first loads hidden (background tab, or a PWA launched from
+    // the home screen), the font may settle while no measurement fires. Re-
+    // measure the moment it becomes visible so the pill is correct on view.
+    const onVisible = () => { if (!document.hidden) measurePill(); };
+    document.addEventListener("visibilitychange", onVisible);
+    let ro = null;
+    if (window.ResizeObserver && tabsRef.current) {
+      ro = new ResizeObserver(() => measurePill());
+      tabsRef.current
+        .querySelectorAll(".v2-topnav-tab")
+        .forEach((btn) => ro.observe(btn));
+    }
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(measurePill);
+    }
+    return () => {
+      window.removeEventListener("resize", measurePill);
+      document.removeEventListener("visibilitychange", onVisible);
+      if (ro) ro.disconnect();
+      timers.forEach(clearTimeout);
+    };
+  }, [measurePill]);
 
   return (
     <div className="v2-shell">
