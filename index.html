@@ -1,6 +1,6 @@
 <!doctype html><html lang="en"><head>
 <meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
 <title>Ledger - Personal finance calculator: budget, debt, investing, taxes</title>
 <meta name="description" content="Free personal finance calculator: monthly budget with rent/utility splits, debt payoff (avalanche vs snowball), compound investing projections, federal+state tax estimator, auto loan + total cost of ownership, and a multi-member household view. All math runs in your browser; data syncs across devices via your Google account."/>
 <meta name="theme-color" content="#1B4D3E"/>
@@ -1677,6 +1677,16 @@ input, select { font: inherit; color: inherit; }
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 12px;
+}
+
+/* Dedicated Auto Loan card — header toggle ("Include Auto Loan") */
+.car-loan-toggle {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.car-loan-toggle .track-toggle-label {
+  font-size: 12px;
+  color: var(--ink-2);
 }
 
 /* Debt page — Auto-optimize box (replaces the confusing "spare cash" card) */
@@ -6539,26 +6549,103 @@ input[type="radio"]:focus-visible + * {
   outline: none;
 }
 
-/* Mobile — collapse top nav padding, allow tab strip to scroll horizontally */
-@media (max-width: 720px) {
+/* ════════════════════════════════════════════════════════════════════════
+   v2 MOBILE — fluid single-column layout + premium glass bottom navigation.
+   Scoped entirely under .v2-shell so /v1/ is never affected. At <=768px the
+   centered top-nav tab group detaches and becomes a fixed bottom bar; wide
+   blocks collapse to a single vertical stack; inputs/buttons go full-width;
+   and the page is locked against horizontal scroll.
+   ════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+  /* Hard stop on horizontal scrolling — every child stays within the viewport. */
+  .v2-shell { overflow-x: hidden; }
+  .v2-shell * { max-width: 100%; }
+
+  /* ── Top bar: now just brand (left) + actions (right); tabs move to bottom ── */
   .v2-shell .v2-topnav {
     padding: 10px 16px;
     gap: 12px;
-    flex-wrap: wrap;
+    min-height: 52px;
+    flex-wrap: nowrap;
+    justify-content: space-between;
   }
   .v2-shell .v2-topnav-brand { font-size: 16px; }
+  .v2-shell .v2-topnav-link { font-size: 12px; padding: 6px 10px; }
+
+  /* ── Tabs → sticky premium glass bottom-navigation bar ── */
   .v2-shell .v2-topnav-tabs {
-    order: 3;
-    flex-basis: 100%;
-    overflow-x: auto;
-    justify-content: flex-start;
-    padding-bottom: 4px;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    top: auto;
+    z-index: 60;
+    display: flex;
+    flex: none;
+    gap: 6px;
+    justify-content: stretch;
+    padding: 8px 12px;
+    padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+    background: rgba(248, 249, 250, 0.8);
+    -webkit-backdrop-filter: blur(10px) saturate(140%);
+    backdrop-filter: blur(10px) saturate(140%);
+    border-top: 1px solid var(--border);
+    box-shadow: 0 -2px 16px rgba(17, 24, 39, 0.05);
   }
-  .v2-shell .v2-topnav-tab { white-space: nowrap; padding: 6px 14px; font-size: 13px; }
-  .v2-shell .v2-main { padding: 20px 16px 60px; }
-  .v2-shell .v2-topnav-link {
-    font-size: 12px;
+  .v2-shell .v2-topnav-tab {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 48px;            /* generous, thumb-friendly touch target */
+    padding: 12px 8px;
+    text-align: center;
+    white-space: nowrap;
+    font-size: 13px;
+    border-radius: 10px;
   }
+  /* Sliding pill keeps working — measurePill re-runs on the resize that crosses
+     this breakpoint — but it must hug the 48px tab rather than the padded bar. */
+  .v2-shell .v2-topnav-pill {
+    top: 8px;
+    height: 48px;
+  }
+
+  /* ── Content clears the fixed bottom bar; full-bleed width ── */
+  .v2-shell .v2-main {
+    max-width: 100%;
+    padding: 20px 16px;
+    padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* ── Flex/grid direction shift: wide blocks → single vertical stack ── */
+  .v2-shell .v2-form-grid {
+    grid-template-columns: 1fr !important;  /* beats the inline auto-fit grid */
+    gap: 14px !important;
+  }
+  .v2-shell .v2-form-actions {
+    flex-direction: column !important;
+  }
+  .v2-shell .v2-form-actions .btn-primary,
+  .v2-shell .v2-form-actions .btn-ghost {
+    width: 100%;
+  }
+
+  /* ── Form-element optimization: full-width, perfectly tappable ── */
+  .v2-shell .text-input,
+  .v2-shell input.text-input,
+  .v2-shell .money-input,
+  .v2-shell .btn-primary,
+  .v2-shell .btn-ghost {
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .v2-shell .money-input input { width: 100%; }
+  .v2-shell .text-input,
+  .v2-shell .money-input input {
+    font-size: 16px;            /* >=16px stops iOS Safari auto-zoom on focus */
+    padding: 12px 14px;
+  }
+  /* Quick-pick chips wrap fluidly instead of forcing overflow */
+  .v2-shell .port-presets { flex-wrap: wrap; }
 }
 
 </style>
@@ -8263,7 +8350,7 @@ function RecordEntryForm({ editing, onCancelEdit, executiveStyle }) {
           )}
         </div>
         <form onSubmit={submit} noValidate>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
+          <div className="v2-form-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
             <Field label="Amount" hint={error ? <span style={{color:"var(--negative)"}}>{error}</span> : "what did you spend?"}>
               <div className="money-input">
                 <span className="money-prefix">$</span>
@@ -8325,7 +8412,7 @@ function RecordEntryForm({ editing, onCancelEdit, executiveStyle }) {
             ))}
           </div>
 
-          <div style={{ display: "flex", gap: 10 }}>
+          <div className="v2-form-actions" style={{ display: "flex", gap: 10 }}>
             <button type="submit" className="btn-primary">
               {editing ? "Save changes" : "Add entry"}
             </button>
@@ -8413,7 +8500,7 @@ function RecordEntryForm({ editing, onCancelEdit, executiveStyle }) {
             ))}
           </div>
 
-          <div style={{ display: "flex", gap: 10 }}>
+          <div className="v2-form-actions" style={{ display: "flex", gap: 10 }}>
             <button type="submit" className="btn-primary">
               {editing ? "Save changes" : "Add entry"}
             </button>
