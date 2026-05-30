@@ -34,7 +34,7 @@
 
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..700;1,8..60,300..700%26family=Inter+Tight:wght@400;500;600%26display=swap"/>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..700;1,8..60,300..700%26family=Inter+Tight:wght@400;500;600%26family=Inter:wght@400;500;600;700%26display=swap"/>
 <style>
 /* ===== Ledger · finance calculator · dark banking aesthetic ===== */
 :root {
@@ -6213,6 +6213,354 @@ input[type="radio"]:focus-visible + * {
   }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+   v2 SaaS visual system — premium minimalist palette, scoped to .v2-shell.
+   Every override here cascades only to v2 because v1's root is .v1-shell
+   (which doesn't carry .v2-shell). CSS variables are redeclared on the
+   .v2-shell selector so child components inherit the new tokens without
+   touching component-level color decisions. v1 stays untouched.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.v2-shell {
+  /* Canvas */
+  --bg:        #f8f9fa;
+  --bg-2:      #ffffff;
+  /* Surfaces */
+  --surface:   #ffffff;
+  --surface-2: #f8f9fa;
+  /* Borders */
+  --border:    #eef0f2;
+  --border-2:  #e5e7eb;
+  /* Ink (text) — three tiers */
+  --ink:       #111827;
+  --ink-2:     #111827;
+  --ink-3:     #4b5563;
+  --ink-4:     #9ca3af;
+  /* Accent — keep brand forest green for actions but soften */
+  --accent:     #1B4D3E;
+  --accent-2:   #2C6E58;
+  --accent-dim: #d1e7df;
+  --accent-bg:  #f1f3f5; /* SaaS-y pill background */
+  /* Radii — bumped from default for the SaaS look */
+  --r:    8px;
+  --r-lg: 12px;
+  /* Typography */
+  font-family: 'Inter', 'Inter Tight', system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  min-height: 100vh;
+}
+
+/* Cards inside v2: clean white surface, 1px hairline, 12px radius, no shadow */
+.v2-shell .card,
+.v2-shell .v2-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: none;
+  padding: 20px 24px;
+}
+
+/* Headings inside v2 use the modern sans-serif stack instead of Source Serif */
+.v2-shell h1,
+.v2-shell h2,
+.v2-shell h3,
+.v2-shell .page-title {
+  font-family: 'Inter', 'Inter Tight', system-ui, sans-serif;
+  color: var(--ink);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* Reset display-font hero numbers to use Inter as well */
+.v2-shell [style*="--display"],
+.v2-shell .hero-num {
+  font-family: 'Inter', 'Inter Tight', system-ui, sans-serif !important;
+  font-weight: 600;
+}
+
+/* ── v2 Top Navigation Bar ────────────────────────────────────────────── */
+.v2-shell .v2-topnav {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 12px 28px;
+  min-height: 60px;
+}
+.v2-shell .v2-topnav-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-weight: 600;
+  font-size: 17px;
+  color: var(--ink);
+  flex-shrink: 0;
+}
+.v2-shell .v2-topnav-brand-mark {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 14px;
+}
+.v2-shell .v2-topnav-tabs {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  justify-content: center;
+}
+.v2-shell .v2-topnav-tab {
+  position: relative;
+  z-index: 1;
+  padding: 8px 18px;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--ink-3);
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: color 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.v2-shell .v2-topnav-tab.is-active {
+  color: var(--ink);
+  font-weight: 500;
+}
+.v2-shell .v2-topnav-tab:hover:not(.is-active) {
+  color: var(--ink-2);
+}
+.v2-shell .v2-topnav-pill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  background: var(--accent-bg);
+  border-radius: 8px;
+  transition:
+    transform 240ms cubic-bezier(0.4, 0, 0.2, 1),
+    width     240ms cubic-bezier(0.4, 0, 0.2, 1),
+    opacity   240ms cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 0;
+  pointer-events: none;
+  will-change: transform, width;
+}
+.v2-shell .v2-topnav-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.v2-shell .v2-topnav-link {
+  font-size: 13px;
+  color: var(--ink-3);
+  text-decoration: none;
+  padding: 6px 12px;
+  border-radius: 6px;
+  transition: background 200ms cubic-bezier(0.4, 0, 0.2, 1), color 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.v2-shell .v2-topnav-link:hover {
+  background: var(--accent-bg);
+  color: var(--ink);
+}
+
+/* Profile menu (avatar dropdown) in top-right */
+.v2-shell .v2-profile-trigger {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  border: none;
+  transition: transform 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.v2-shell .v2-profile-trigger:hover { transform: scale(1.04); }
+.v2-shell .v2-profile-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 240px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
+  padding: 12px;
+  z-index: 100;
+}
+.v2-shell .v2-profile-menu-email {
+  font-size: 12px;
+  color: var(--ink-3);
+  padding: 4px 8px 10px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+  word-break: break-all;
+}
+.v2-shell .v2-profile-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--ink-2);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.v2-shell .v2-profile-menu-item:hover {
+  background: var(--accent-bg);
+}
+.v2-shell .v2-profile-menu-item.danger {
+  color: #b2452a;
+}
+
+/* Main content area below the top nav */
+.v2-shell .v2-main {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 32px 28px 80px;
+}
+
+/* Frameless data viz: strip backgrounds from recharts surfaces in v2 */
+.v2-shell .recharts-cartesian-grid line {
+  stroke: var(--border) !important;
+  stroke-opacity: 0.6;
+}
+.v2-shell .recharts-cartesian-axis-line {
+  stroke: var(--border) !important;
+}
+
+/* Category tags inside v2 — muted, generous padding */
+.v2-shell .record-item-category {
+  display: inline-block;
+  background: #f3f4f6;
+  color: #374151;
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* Record timeline rows: more breathing room, no hard borders */
+.v2-shell .record-item {
+  border-bottom: 1px solid var(--border);
+  padding: 14px 4px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.v2-shell .record-item:last-child {
+  border-bottom: none;
+}
+.v2-shell .record-day {
+  margin-bottom: 8px;
+}
+.v2-shell .record-day-head {
+  padding: 16px 4px 6px;
+  border-bottom: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.v2-shell .record-day-date {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-3);
+  letter-spacing: 0.02em;
+}
+.v2-shell .record-day-total {
+  font-size: 13px;
+  color: var(--ink-3);
+  font-weight: 500;
+}
+
+/* Buttons inside v2 — soft pill style */
+.v2-shell .btn-primary {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 18px;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.v2-shell .btn-primary:hover {
+  background: var(--accent-2);
+}
+.v2-shell .btn-ghost {
+  background: transparent;
+  color: var(--ink-3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 18px;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+/* Inputs inside v2 */
+.v2-shell .text-input,
+.v2-shell input.text-input,
+.v2-shell .money-input input {
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border-2);
+  border-radius: 8px;
+  padding: 9px 12px;
+  color: var(--ink);
+}
+.v2-shell .text-input:focus,
+.v2-shell .money-input.is-focused {
+  border-color: var(--accent);
+  outline: none;
+}
+
+/* Mobile — collapse top nav padding, allow tab strip to scroll horizontally */
+@media (max-width: 720px) {
+  .v2-shell .v2-topnav {
+    padding: 10px 16px;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .v2-shell .v2-topnav-brand { font-size: 16px; }
+  .v2-shell .v2-topnav-tabs {
+    order: 3;
+    flex-basis: 100%;
+    overflow-x: auto;
+    justify-content: flex-start;
+    padding-bottom: 4px;
+  }
+  .v2-shell .v2-topnav-tab { white-space: nowrap; padding: 6px 14px; font-size: 13px; }
+  .v2-shell .v2-main { padding: 20px 16px 60px; }
+  .v2-shell .v2-topnav-link {
+    font-size: 12px;
+  }
+}
+
 </style>
 <script>(function () { try { var mode = localStorage.getItem("ledger:colorMode"); if (mode !== "dark") { document.documentElement.dataset.colorMode = "light"; var v = {"--bg":"#F5F2EC","--bg-2":"#EEEAE0","--surface":"#FFFFFF","--surface-2":"#FAF7EF","--border":"#E5E0D2","--border-2":"#D3CDBD","--ink":"#1A1F1C","--ink-2":"#3F423E","--ink-3":"#6B7068","--ink-4":"#A0A398","--accent":"#1B4D3E","--accent-2":"#2C6E58","--accent-dim":"#A8C5B7","--accent-bg":"#E5EDE8","--gold":"#A8895A","--gold-dim":"#D4C39A","--positive":"#2C6E58","--negative":"#B2452A","--ai-fab-fg":"#FFFFFF"}; var s = document.documentElement.style; for (var k in v) s.setProperty(k, v[k]); } else { document.documentElement.dataset.colorMode = "dark"; } } catch (e) {} })();</script>
 </head>
@@ -9994,7 +10342,108 @@ function V2ProfileBlock() {
   );
 }
 
+// ── Profile dropdown menu — replaces the sidebar profile block ─────────
+// Avatar trigger in the top-right opens a small menu with the user email,
+// sync status, export, and sign-out. Click-outside closes it.
+function V2ProfileMenu() {
+  const [user, setUser] = useStateV2(() => window.__currentUser || null);
+  const [open, setOpen] = useStateV2(false);
+  const wrapRef = useRefV2(null);
+
+  useEffectV2(() => {
+    const id = setInterval(() => {
+      const next = window.__currentUser || null;
+      setUser((prev) => {
+        if (prev === next) return prev;
+        if (prev && next && prev.email === next.email && prev.uid === next.uid) return prev;
+        return next;
+      });
+    }, 1500);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffectV2(() => {
+    if (!open) return;
+    const onClick = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [open]);
+
+  if (!user) return null;
+  const email = user.email || "Signed in";
+  const initial = (email[0] || "?").toUpperCase();
+  const isGuest = user?.uid === "_guest" || user?.email === "_guest" || !user?.uid;
+
+  const handleSignOut = async () => {
+    if (!window.confirm("Sign out of Ledger? Your local data stays on this device.")) return;
+    try { await window.__signOut?.(); } catch (e) { console.warn(e); }
+  };
+
+  return (
+    <div ref={wrapRef} style={{ position: "relative" }}>
+      <button
+        type="button"
+        className="v2-profile-trigger"
+        onClick={() => setOpen((v) => !v)}
+        title={email}
+        aria-label={`Profile menu for ${email}`}
+        aria-expanded={open}
+      >
+        {initial}
+      </button>
+      {open && (
+        <div className="v2-profile-menu" role="menu">
+          <div className="v2-profile-menu-email">{email}</div>
+          <div style={{
+            fontSize: 11, padding: "4px 8px 8px", color: isGuest ? "#a8895a" : "#1b4d3e",
+            fontWeight: 500, letterSpacing: "0.04em",
+          }}>
+            {isGuest ? "⚠ Local only — sign in to sync" : "☁ Cloud sync active"}
+          </div>
+          <button
+            type="button"
+            className="v2-profile-menu-item"
+            onClick={() => { setOpen(false); exportAllLedgerData(); }}
+          >
+            Export all data
+          </button>
+          <a
+            href="v1/"
+            className="v2-profile-menu-item"
+            style={{ textDecoration: "none" }}
+          >
+            Open full calculator →
+          </a>
+          <button
+            type="button"
+            className="v2-profile-menu-item danger"
+            onClick={() => { setOpen(false); handleSignOut(); }}
+          >
+            Sign out
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function V2Shell() {
+  // Force the body background to match the v2 canvas. Otherwise the cold-start
+  // bootstrap palette (cream) bleeds through below the .v2-shell wrapper on
+  // pages where the content doesn't fill the viewport.
+  useEffectV2(() => {
+    const prevBg = document.body.style.background;
+    const prevHtmlBg = document.documentElement.style.background;
+    document.body.style.background = "#f8f9fa";
+    document.documentElement.style.background = "#f8f9fa";
+    return () => {
+      document.body.style.background = prevBg;
+      document.documentElement.style.background = prevHtmlBg;
+    };
+  }, []);
+
   const [active, setActive] = useStateV2(() => {
     const hash = window.location.hash.slice(1);
     return V2_TABS.find((t) => t.id === hash)?.id || "current";
@@ -10011,80 +10460,39 @@ function V2Shell() {
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
 
-  const [sidebarHidden, setSidebarHidden] = useStateV2(() => {
-    const saved = localStorage.getItem("ledger:sidebarHidden");
-    if (saved === "1") return true;
-    if (saved === "0") return false;
-    return typeof window !== "undefined" && window.innerWidth < 1024;
-  });
-  useEffectV2(() => {
-    localStorage.setItem("ledger:sidebarHidden", sidebarHidden ? "1" : "0");
-  }, [sidebarHidden]);
-
   const renderTab = () => {
     switch (active) {
       case "current":    return window.V2Current ? <window.V2Current /> : null;
       case "projection": return window.V2Projection ? <window.V2Projection /> : null;
       case "record":
-        // hideSummary because the v2 Current tab already shows the summary.
-        // executiveStyle strips card chrome + uses eyebrow section labels to
-        // match the v2 Current/Projection aesthetic instead of v1's traditional layout.
         return window.RecordTab ? <window.RecordTab hideSummary={true} executiveStyle={true} /> : null;
       default:           return null;
     }
   };
 
-  // ── Sliding nav pill — measure the active button's offsetLeft/Width
-  // every time `active` changes so the pill animates between positions.
-  // useLayoutEffect runs synchronously after DOM mutation but before paint,
-  // so the user never sees a flash of mis-positioned pill on first render. ──
-  const navRef = useRefV2(null);
+  // ── Sliding pill on the top nav tabs ──
+  const tabsRef = useRefV2(null);
   const [pillRect, setPillRect] = useStateV2({ x: 0, w: 0, visible: false });
   useLayoutEffectV2(() => {
-    if (!navRef.current) return;
-    const btn = navRef.current.querySelector(".nav-item.is-active");
+    if (!tabsRef.current) return;
+    const btn = tabsRef.current.querySelector(".v2-topnav-tab.is-active");
     if (!btn) { setPillRect((r) => ({ ...r, visible: false })); return; }
     setPillRect({ x: btn.offsetLeft, w: btn.offsetWidth, visible: true });
   }, [active]);
 
   return (
-    <div className={"app" + (sidebarHidden ? " app-sidebar-hidden" : "")}>
-      <aside className="sidebar">
-        <div className="brand">
-          <span className="brand-logo-btn" style={{ cursor: "default" }}>
-            <span className="brand-mark">$</span>
-            <span className="brand-name">Ledger</span>
-          </span>
-          <button
-            type="button"
-            className="brand-logo-btn"
-            onClick={() => {
-              const cur = document.documentElement.dataset.colorMode === "dark" ? "dark" : "light";
-              const next = cur === "dark" ? "light" : "dark";
-              try { localStorage.setItem("ledger:colorMode", next); } catch {}
-              // Reload to re-run the color bootstrap script — simpler than re-applying every CSS variable here.
-              window.location.reload();
-            }}
-            title="Toggle light / dark mode"
-            aria-label="Toggle color mode"
-            style={{ marginLeft: 8, padding: "4px 10px", fontSize: 14, border: "1px solid var(--border)", background: "transparent", color: "var(--ink-2)", borderRadius: 4, cursor: "pointer" }}
-          >
-            ☼
-          </button>
-          <button
-            className="sidebar-toggle"
-            onClick={() => setSidebarHidden(true)}
-            title="Hide sidebar"
-            aria-label="Hide sidebar"
-          >
-            ‹
-          </button>
+    <div className="v2-shell">
+      <header className="v2-topnav">
+        {/* Brand left */}
+        <div className="v2-topnav-brand">
+          <span className="v2-topnav-brand-mark">$</span>
+          <span>Ledger</span>
         </div>
 
-        <div className="nav-section">Ledger</div>
-        <nav className="nav nav-pill-track" ref={navRef}>
+        {/* Tabs center — sliding pill behind */}
+        <nav className="v2-topnav-tabs" ref={tabsRef} aria-label="Primary navigation">
           <div
-            className="nav-active-pill"
+            className="v2-topnav-pill"
             style={{
               transform: `translateX(${pillRect.x}px)`,
               width: pillRect.w,
@@ -10095,50 +10503,26 @@ function V2Shell() {
           {V2_TABS.map((t) => (
             <button
               key={t.id}
-              className={"nav-item" + (active === t.id ? " is-active" : "")}
+              type="button"
+              className={"v2-topnav-tab" + (active === t.id ? " is-active" : "")}
               onClick={() => setActive(t.id)}
             >
-              <span className="nav-glyph">{t.glyph}</span>
-              <span>{t.label}</span>
+              {t.label}
             </button>
           ))}
         </nav>
 
-        <div className="nav-section" style={{ marginTop: 24 }}>More</div>
-        <nav className="nav">
-          <a
-            className="nav-item"
-            href="v1/"
-            title="Open the full calculator (budget, debt, investing, taxes, household)"
-            style={{ textDecoration: "none" }}
-          >
-            <span className="nav-glyph">→</span>
-            <span>Full calculator</span>
+        {/* Actions right */}
+        <div className="v2-topnav-right">
+          <a className="v2-topnav-link" href="v1/" title="Open the full calculator">
+            Full calculator
           </a>
-        </nav>
+          <V2ProfileMenu />
+        </div>
+      </header>
 
-        <V2ProfileBlock />
-      </aside>
-
-      {sidebarHidden && (
-        <button
-          className="sidebar-show"
-          onClick={() => setSidebarHidden(false)}
-          title="Show sidebar"
-          aria-label="Show sidebar"
-        >
-          ›
-        </button>
-      )}
-
-      <main className="main">
+      <main className="v2-main">
         {renderTab()}
-        <footer className="page-foot">
-          <span style={{ color: "var(--ink-3)", fontSize: 12 }}>
-            Ledger v2 · data syncs across devices when signed in ·{" "}
-            <a href="v1/" style={{ color: "var(--accent)" }}>v1 calculator →</a>
-          </span>
-        </footer>
       </main>
     </div>
   );

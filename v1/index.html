@@ -34,7 +34,7 @@
 
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..700;1,8..60,300..700%26family=Inter+Tight:wght@400;500;600%26display=swap"/>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..700;1,8..60,300..700%26family=Inter+Tight:wght@400;500;600%26family=Inter:wght@400;500;600;700%26display=swap"/>
 <style>
 /* ===== Ledger · finance calculator · dark banking aesthetic ===== */
 :root {
@@ -6210,6 +6210,354 @@ input[type="radio"]:focus-visible + * {
     animation: none !important;
     transition: none !important;
     transform: none !important;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   v2 SaaS visual system — premium minimalist palette, scoped to .v2-shell.
+   Every override here cascades only to v2 because v1's root is .v1-shell
+   (which doesn't carry .v2-shell). CSS variables are redeclared on the
+   .v2-shell selector so child components inherit the new tokens without
+   touching component-level color decisions. v1 stays untouched.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.v2-shell {
+  /* Canvas */
+  --bg:        #f8f9fa;
+  --bg-2:      #ffffff;
+  /* Surfaces */
+  --surface:   #ffffff;
+  --surface-2: #f8f9fa;
+  /* Borders */
+  --border:    #eef0f2;
+  --border-2:  #e5e7eb;
+  /* Ink (text) — three tiers */
+  --ink:       #111827;
+  --ink-2:     #111827;
+  --ink-3:     #4b5563;
+  --ink-4:     #9ca3af;
+  /* Accent — keep brand forest green for actions but soften */
+  --accent:     #1B4D3E;
+  --accent-2:   #2C6E58;
+  --accent-dim: #d1e7df;
+  --accent-bg:  #f1f3f5; /* SaaS-y pill background */
+  /* Radii — bumped from default for the SaaS look */
+  --r:    8px;
+  --r-lg: 12px;
+  /* Typography */
+  font-family: 'Inter', 'Inter Tight', system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  min-height: 100vh;
+}
+
+/* Cards inside v2: clean white surface, 1px hairline, 12px radius, no shadow */
+.v2-shell .card,
+.v2-shell .v2-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: none;
+  padding: 20px 24px;
+}
+
+/* Headings inside v2 use the modern sans-serif stack instead of Source Serif */
+.v2-shell h1,
+.v2-shell h2,
+.v2-shell h3,
+.v2-shell .page-title {
+  font-family: 'Inter', 'Inter Tight', system-ui, sans-serif;
+  color: var(--ink);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* Reset display-font hero numbers to use Inter as well */
+.v2-shell [style*="--display"],
+.v2-shell .hero-num {
+  font-family: 'Inter', 'Inter Tight', system-ui, sans-serif !important;
+  font-weight: 600;
+}
+
+/* ── v2 Top Navigation Bar ────────────────────────────────────────────── */
+.v2-shell .v2-topnav {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 12px 28px;
+  min-height: 60px;
+}
+.v2-shell .v2-topnav-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-weight: 600;
+  font-size: 17px;
+  color: var(--ink);
+  flex-shrink: 0;
+}
+.v2-shell .v2-topnav-brand-mark {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 14px;
+}
+.v2-shell .v2-topnav-tabs {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  justify-content: center;
+}
+.v2-shell .v2-topnav-tab {
+  position: relative;
+  z-index: 1;
+  padding: 8px 18px;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--ink-3);
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: color 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.v2-shell .v2-topnav-tab.is-active {
+  color: var(--ink);
+  font-weight: 500;
+}
+.v2-shell .v2-topnav-tab:hover:not(.is-active) {
+  color: var(--ink-2);
+}
+.v2-shell .v2-topnav-pill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  background: var(--accent-bg);
+  border-radius: 8px;
+  transition:
+    transform 240ms cubic-bezier(0.4, 0, 0.2, 1),
+    width     240ms cubic-bezier(0.4, 0, 0.2, 1),
+    opacity   240ms cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 0;
+  pointer-events: none;
+  will-change: transform, width;
+}
+.v2-shell .v2-topnav-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.v2-shell .v2-topnav-link {
+  font-size: 13px;
+  color: var(--ink-3);
+  text-decoration: none;
+  padding: 6px 12px;
+  border-radius: 6px;
+  transition: background 200ms cubic-bezier(0.4, 0, 0.2, 1), color 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.v2-shell .v2-topnav-link:hover {
+  background: var(--accent-bg);
+  color: var(--ink);
+}
+
+/* Profile menu (avatar dropdown) in top-right */
+.v2-shell .v2-profile-trigger {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  border: none;
+  transition: transform 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.v2-shell .v2-profile-trigger:hover { transform: scale(1.04); }
+.v2-shell .v2-profile-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 240px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
+  padding: 12px;
+  z-index: 100;
+}
+.v2-shell .v2-profile-menu-email {
+  font-size: 12px;
+  color: var(--ink-3);
+  padding: 4px 8px 10px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+  word-break: break-all;
+}
+.v2-shell .v2-profile-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--ink-2);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.v2-shell .v2-profile-menu-item:hover {
+  background: var(--accent-bg);
+}
+.v2-shell .v2-profile-menu-item.danger {
+  color: #b2452a;
+}
+
+/* Main content area below the top nav */
+.v2-shell .v2-main {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 32px 28px 80px;
+}
+
+/* Frameless data viz: strip backgrounds from recharts surfaces in v2 */
+.v2-shell .recharts-cartesian-grid line {
+  stroke: var(--border) !important;
+  stroke-opacity: 0.6;
+}
+.v2-shell .recharts-cartesian-axis-line {
+  stroke: var(--border) !important;
+}
+
+/* Category tags inside v2 — muted, generous padding */
+.v2-shell .record-item-category {
+  display: inline-block;
+  background: #f3f4f6;
+  color: #374151;
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* Record timeline rows: more breathing room, no hard borders */
+.v2-shell .record-item {
+  border-bottom: 1px solid var(--border);
+  padding: 14px 4px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.v2-shell .record-item:last-child {
+  border-bottom: none;
+}
+.v2-shell .record-day {
+  margin-bottom: 8px;
+}
+.v2-shell .record-day-head {
+  padding: 16px 4px 6px;
+  border-bottom: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.v2-shell .record-day-date {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-3);
+  letter-spacing: 0.02em;
+}
+.v2-shell .record-day-total {
+  font-size: 13px;
+  color: var(--ink-3);
+  font-weight: 500;
+}
+
+/* Buttons inside v2 — soft pill style */
+.v2-shell .btn-primary {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 18px;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.v2-shell .btn-primary:hover {
+  background: var(--accent-2);
+}
+.v2-shell .btn-ghost {
+  background: transparent;
+  color: var(--ink-3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 18px;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+/* Inputs inside v2 */
+.v2-shell .text-input,
+.v2-shell input.text-input,
+.v2-shell .money-input input {
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border-2);
+  border-radius: 8px;
+  padding: 9px 12px;
+  color: var(--ink);
+}
+.v2-shell .text-input:focus,
+.v2-shell .money-input.is-focused {
+  border-color: var(--accent);
+  outline: none;
+}
+
+/* Mobile — collapse top nav padding, allow tab strip to scroll horizontally */
+@media (max-width: 720px) {
+  .v2-shell .v2-topnav {
+    padding: 10px 16px;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .v2-shell .v2-topnav-brand { font-size: 16px; }
+  .v2-shell .v2-topnav-tabs {
+    order: 3;
+    flex-basis: 100%;
+    overflow-x: auto;
+    justify-content: flex-start;
+    padding-bottom: 4px;
+  }
+  .v2-shell .v2-topnav-tab { white-space: nowrap; padding: 6px 14px; font-size: 13px; }
+  .v2-shell .v2-main { padding: 20px 16px 60px; }
+  .v2-shell .v2-topnav-link {
+    font-size: 12px;
   }
 }
 
